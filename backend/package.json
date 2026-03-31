@@ -1,0 +1,39 @@
+{
+  "name": "ai-hot-news-backend",
+  "version": "1.0.0",
+  "description": "AI热点新闻监控系统 - 后端服务",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0",
+    "node-schedule": "^2.1.1",
+    "sqlite3": "^5.1.6",
+    "better-sqlite3": "^9.0.0",
+    "winston": "^3.11.0",
+    "cheerio": "^1.0.0-rc.12",
+    "openai": "^4.24.0",
+    "express-rate-limit": "^7.0.0",
+    "helmet": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.20",
+    "@types/node": "^20.0.0",
+    "@types/node-schedule": "^2.1.5",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0",
+    "eslint": "^8.50.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0"
+  }
+}

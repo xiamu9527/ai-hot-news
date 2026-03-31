@@ -1,0 +1,131 @@
+{
+  "server": {
+    "port": 3001,
+    "host": "localhost",
+    "environment": "development"
+  },
+  "database": {
+    "type": "sqlite",
+    "path": "./data/news.db"
+  },
+  "api": {
+    "baseUrl": "http://localhost:3001",
+    "timeout": 30000
+  },
+  "datasources": {
+    "twitter": {
+      "enabled": true,
+      "apiKey": "YOUR_TWITTER_API_KEY",
+      "apiUrl": "https://api.twitter.com/2",
+      "searchTopic": "AI编程",
+      "refreshInterval": 300000,
+      "limit": 50
+    },
+    "hackerNews": {
+      "enabled": true,
+      "apiUrl": "https://hacker-news.firebaseio.com/v0",
+      "refreshInterval": 600000,
+      "limit": 30
+    },
+    "bing": {
+      "enabled": true,
+      "searchUrl": "https://www.bing.com/search",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫，无需API Key"
+    },
+    "google": {
+      "enabled": true,
+      "searchUrl": "https://www.google.com/search",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫，注意频率限制"
+    },
+    "duckduckgo": {
+      "enabled": true,
+      "searchUrl": "https://duckduckgo.com/search",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "隐私友好，无需API Key"
+    },
+    "weibo": {
+      "enabled": true,
+      "searchUrl": "https://s.weibo.com/weibo",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫"
+    },
+    "bili": {
+      "enabled": true,
+      "searchUrl": "https://search.bilibili.com/all",
+      "refreshInterval": 900000,
+      "limit": 15,
+      "note": "Web爬虫"
+    },
+    "sogou": {
+      "enabled": true,
+      "searchUrl": "https://www.sogou.com/web",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫，支持微信公众号"
+    }
+  },
+  "ai": {
+    "provider": "openai",
+    "apiKey": "YOUR_OPENAI_API_KEY",
+    "apiUrl": "https://api.openai.com/v1",
+    "model": "gpt-3.5-turbo",
+    "temperature": 0.7,
+    "maxTokens": 500,
+    "timeout": 30000
+  },
+  "aiAlternatives": [
+    {
+      "provider": "azure",
+      "enabled": false,
+      "apiKey": "YOUR_AZURE_OPENAI_KEY",
+      "apiUrl": "https://your-resource.openai.azure.com",
+      "deploymentName": "your-deployment"
+    },
+    {
+      "provider": "custom",
+      "enabled": false,
+      "apiKey": "YOUR_CUSTOM_API_KEY",
+      "apiUrl": "https://your-custom-ai-endpoint.com/v1"
+    }
+  ],
+  "notifications": {
+    "enabled": true,
+    "types": ["web"],
+    "web": {
+      "enabled": true,
+      "useWebSocket": true
+    }
+  },
+  "crawler": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "timeout": 15000,
+    "retries": 3,
+    "proxy": null,
+    "rateLimiting": {
+      "enabled": true,
+      "requestsPerMinute": 30
+    }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "file": "./logs/app.log"
+  },
+  "security": {
+    "cors": {
+      "enabled": true,
+      "origin": ["http://localhost:3000", "http://localhost:3001"]
+    },
+    "rateLimit": {
+      "enabled": true,
+      "windowMs": 900000,
+      "maxRequests": 100
+    }
+  }
+}

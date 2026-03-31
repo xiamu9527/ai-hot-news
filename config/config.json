@@ -1,0 +1,64 @@
+{
+  "ai": {
+    "provider": "bailian",
+    "apiKey": "sk-sp-63516a44ddbc467789104efab03edfe7",
+    "apiUrl": "https://coding.dashscope.aliyuncs.com/v1",
+    "model": "qwen3.5-plus",
+    "temperature": 0.7,
+    "maxTokens": 500,
+    "timeout": 30000
+  },
+  "datasources": {
+    "twitter": {
+      "apiKey": "new1_03876849ea754cd481a7c3e231d020ea"  
+    },
+    "hackerNews": {
+      "enabled": true,
+      "apiUrl": "https://hacker-news.firebaseio.com/v0",
+      "refreshInterval": 600000,
+      "limit": 30
+    },
+    "bing": {
+      "enabled": true,
+      "searchUrl": "https://www.bing.com/search",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫，无需API Key"
+    },
+    "google": {
+      "enabled": true,
+      "searchUrl": "https://www.google.com/search",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫，注意频率限制"
+    },
+    "duckduckgo": {
+      "enabled": true,
+      "searchUrl": "https://duckduckgo.com/search",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "隐私友好，无需API Key"
+    },
+    "weibo": {
+      "enabled": true,
+      "searchUrl": "https://s.weibo.com/weibo",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫"
+    },
+    "bili": {
+      "enabled": true,
+      "searchUrl": "https://search.bilibili.com/all",
+      "refreshInterval": 900000,
+      "limit": 15,
+      "note": "Web爬虫"
+    },
+    "sogou": {
+      "enabled": true,
+      "searchUrl": "https://www.sogou.com/web",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "Web爬虫，支持微信公众号"
+    }
+  }
+}
