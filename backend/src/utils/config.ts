@@ -99,7 +99,7 @@ export function loadConfig(): Config {
   const examplePath = path.resolve(__dirname, '../../../config/config.example.json')
 
   // 先加载 example config 作为默认值
-  let defaultConfig: Config = {}
+  let defaultConfig: any = {}
   if (fs.existsSync(examplePath)) {
     defaultConfig = JSON.parse(fs.readFileSync(examplePath, 'utf-8'))
   }

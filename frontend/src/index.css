@@ -33,16 +33,55 @@ body {
   --color-danger: #ef4444;
 }
 
-/* 深色卡片样式 */
-.card {
-  @apply bg-slate-900 border border-slate-800 rounded-lg p-4 hover:bg-slate-800 transition-colors;
+/* 背景网格纹理 */
+.bg-grid-pattern {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 
-.card-hover {
-  @apply card hover:shadow-xl hover:shadow-cyan-900/20 hover:border-cyan-600;
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* 通知面板滑入动画 */
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in {
+  animation: slide-in 0.25s ease-out;
+}
+
+/* Toast 弹出动画 */
+@keyframes toast-in {
+  from { transform: translateY(20px) scale(0.95); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.animate-toast-in {
+  animation: toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* 响应式网格 */
 .grid-responsive {
   @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4;
+}
+
+/* Selection 样式 */
+::selection {
+  background: rgba(6, 182, 212, 0.3);
+  color: white;
 }
