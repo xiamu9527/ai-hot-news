@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useSSE } from '@/hooks/useSSE'
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from '@/utils/api'
 import type { Notification } from '@/types'
+import { Spotlight } from '@/components/ui/spotlight'
+import { FloatingDock } from '@/components/ui/floating-dock'
 import NewsPage from '@/pages/NewsPage'
 import MonitorPage from '@/pages/MonitorPage'
 import SettingsPage from '@/pages/SettingsPage'
@@ -22,57 +25,79 @@ function NotificationPanel({
   onMarkAllRead: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div
-        className="relative w-full max-w-sm h-full bg-slate-900/95 border-l border-slate-800 shadow-2xl
-          overflow-y-auto animate-slide-in"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex justify-end"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+        className="relative w-full max-w-sm h-full bg-slate-900/95 border-l border-slate-800/60 shadow-2xl shadow-black/40 overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-slate-900/95 backdrop-blur p-4 border-b border-slate-800/60 z-10">
+        <div className="sticky top-0 bg-slate-900/95 backdrop-blur-xl p-4 border-b border-slate-800/60 z-10">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-100 flex items-center gap-2">
+              <span className="text-lg">🔔</span>
               通知中心
               {unreadCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+                <motion.span
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30"
+                >
                   {unreadCount}
-                </span>
+                </motion.span>
               )}
             </h3>
             <div className="flex items-center gap-2">
               {unreadCount > 0 && (
                 <button
                   onClick={onMarkAllRead}
-                  className="text-[10px] text-cyan-500 hover:text-cyan-400"
+                  className="text-[10px] text-cyan-500 hover:text-cyan-400 transition-colors"
                 >
                   全部已读
                 </button>
               )}
-              <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg">✕</button>
+              <button
+                onClick={onClose}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 transition-all text-sm"
+              >
+                ✕
+              </button>
             </div>
           </div>
         </div>
 
         <div className="p-3 space-y-2">
           {notifications.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-3xl mb-2">🔔</div>
+            <div className="text-center py-16">
+              <div className="text-4xl mb-3 opacity-30">🔔</div>
               <p className="text-sm text-slate-500">暂无通知</p>
             </div>
           ) : (
-            notifications.map((n) => (
-              <div
+            notifications.map((n, i) => (
+              <motion.div
                 key={n.id}
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.03 }}
                 onClick={() => n.read === 0 && onMarkRead(n.id)}
-                className={`p-3 rounded-lg border transition-all cursor-pointer ${
+                className={`p-3 rounded-xl border transition-all cursor-pointer group ${
                   n.read === 0
-                    ? 'border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10'
-                    : 'border-slate-800/40 bg-slate-800/20 opacity-60'
+                    ? 'border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10 hover:border-cyan-500/30'
+                    : 'border-slate-800/40 bg-slate-800/20 opacity-50 hover:opacity-70'
                 }`}
               >
-                <div className="flex items-start gap-2">
+                <div className="flex items-start gap-2.5">
                   <span className="text-sm mt-0.5">
-                    {n.type === 'keyword_match' ? '🔔' : '📡'}
+                    {n.type === 'keyword_match' ? '🎯' : '📡'}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-slate-200 line-clamp-1">{n.title}</p>
@@ -82,15 +107,15 @@ function NotificationPanel({
                     </p>
                   </div>
                   {n.read === 0 && (
-                    <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-1.5 shrink-0" />
+                    <div className="w-2 h-2 rounded-full bg-cyan-400 mt-1.5 shrink-0 animate-pulse" />
                   )}
                 </div>
-              </div>
+              </motion.div>
             ))
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -139,131 +164,169 @@ export default function App() {
     setUnreadCount(0)
   }
 
-  const tabs: { key: Tab; label: string; icon: string }[] = [
-    { key: 'news', label: '热点', icon: '📡' },
-    { key: 'monitor', label: '监控', icon: '🎯' },
-    { key: 'settings', label: '设置', icon: '⚙️' },
+  const dockItems = [
+    {
+      title: '热点',
+      icon: <span>📡</span>,
+      active: activeTab === 'news',
+      onClick: () => setActiveTab('news'),
+    },
+    {
+      title: '监控',
+      icon: <span>🎯</span>,
+      active: activeTab === 'monitor',
+      onClick: () => setActiveTab('monitor'),
+    },
+    {
+      title: '设置',
+      icon: <span>⚙️</span>,
+      active: activeTab === 'settings',
+      onClick: () => setActiveTab('settings'),
+    },
   ]
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 relative overflow-hidden">
-      {/* 背景网格 */}
-      <div className="fixed inset-0 bg-grid-pattern opacity-[0.02] pointer-events-none" />
-      {/* 背景光晕 */}
-      <div className="fixed top-0 left-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-[120px] pointer-events-none" />
-      <div className="fixed bottom-0 right-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-[120px] pointer-events-none" />
+      {/* 背景效果 */}
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(8,145,178,0.08),transparent)] pointer-events-none" />
+      <div className="fixed top-0 left-1/4 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[150px] pointer-events-none" />
+      <div className="fixed bottom-0 right-1/4 w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[150px] pointer-events-none" />
 
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-slate-800/60 bg-slate-950/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 py-3">
+      {/* Header with Spotlight */}
+      <header className="sticky top-0 z-40 border-b border-slate-800/60 bg-slate-950/80 backdrop-blur-xl overflow-hidden">
+        <Spotlight className="-top-40 left-0 md:left-60 md:-top-20" fill="rgba(6,182,212,0.08)" />
+        <div className="max-w-7xl mx-auto px-4 py-3 relative">
           <div className="flex items-center justify-between">
             {/* Logo */}
-            <div className="flex items-center gap-3">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="flex items-center gap-3"
+            >
               <div className="relative">
-                <div className="w-9 h-9 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center
-                  shadow-lg shadow-cyan-500/20">
+                <motion.div
+                  whileHover={{ scale: 1.05, rotate: 2 }}
+                  className="w-9 h-9 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-500/25"
+                >
                   <span className="text-lg">⚡</span>
-                </div>
-                <div className="absolute -inset-0.5 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg blur opacity-30" />
+                </motion.div>
+                <div className="absolute -inset-0.5 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg blur opacity-30 animate-pulse" />
               </div>
               <div>
-                <h1 className="text-base font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
+                <h1 className="text-base font-bold bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-400 bg-clip-text text-transparent">
                   HotPulse
                 </h1>
-                <p className="text-[10px] text-slate-600 tracking-wider">AI 热点监控引擎</p>
+                <p className="text-[10px] text-slate-600 tracking-widest uppercase">AI 热点监控引擎</p>
               </div>
-            </div>
+            </motion.div>
 
             {/* 右侧控制 */}
             <div className="flex items-center gap-3">
               {/* 连接状态 */}
-              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full
-                border border-slate-800/60 bg-slate-900/50">
-                <div className={`w-1.5 h-1.5 rounded-full ${
-                  connected ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-slate-600'
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-slate-800/60 bg-slate-900/50"
+              >
+                <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                  connected
+                    ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50 animate-pulse'
+                    : 'bg-slate-600'
                 }`} />
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[10px] text-slate-500 font-mono">
                   {connected ? 'LIVE' : 'OFFLINE'}
                 </span>
-              </div>
+              </motion.div>
 
               {/* 通知按钮 */}
-              <button
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => setShowNotifications(true)}
                 className="relative p-2 rounded-lg hover:bg-slate-800/50 transition-colors"
               >
                 <span className="text-lg">🔔</span>
-                {unreadCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center
-                    text-[9px] font-bold bg-red-500 text-white rounded-full">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </button>
+                <AnimatePresence>
+                  {unreadCount > 0 && (
+                    <motion.span
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      exit={{ scale: 0 }}
+                      className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center text-[9px] font-bold bg-red-500 text-white rounded-full shadow-lg shadow-red-500/30"
+                    >
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </motion.button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Navigation */}
-      <nav className="sticky top-[57px] z-30 border-b border-slate-800/40 bg-slate-950/60 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 flex">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`relative py-3 px-4 text-sm font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === tab.key
-                  ? 'text-cyan-400'
-                  : 'text-slate-500 hover:text-slate-300'
-              }`}
-            >
-              <span className="text-base">{tab.icon}</span>
-              {tab.label}
-              {activeTab === tab.key && (
-                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full" />
-              )}
-            </button>
-          ))}
+      {/* Floating Dock Navigation */}
+      <nav className="sticky top-[57px] z-30 bg-slate-950/60 backdrop-blur-xl border-b border-slate-800/40">
+        <div className="max-w-7xl mx-auto px-4 py-2 flex justify-center">
+          <FloatingDock items={dockItems} />
         </div>
       </nav>
 
-      {/* Main Content */}
+      {/* Main Content with page transitions */}
       <main className="max-w-7xl mx-auto px-4 py-6 relative">
-        {activeTab === 'news' && <NewsPage />}
-        {activeTab === 'monitor' && <MonitorPage />}
-        {activeTab === 'settings' && <SettingsPage />}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.2 }}
+          >
+            {activeTab === 'news' && <NewsPage />}
+            {activeTab === 'monitor' && <MonitorPage />}
+            {activeTab === 'settings' && <SettingsPage />}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
       {/* Toast 通知 */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 animate-toast-in">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-cyan-500/20
-            bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-cyan-500/10 max-w-sm">
-            <span className="text-lg shrink-0">
-              {toast.type === 'keyword_match' ? '🔔' : '📡'}
-            </span>
-            <p className="text-xs text-slate-200 line-clamp-2">{toast.message}</p>
-            <button
-              onClick={() => setToast(null)}
-              className="text-slate-500 hover:text-slate-300 text-sm shrink-0"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+            className="fixed bottom-6 right-6 z-50"
+          >
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-cyan-500/20
+              bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-cyan-500/10 max-w-sm">
+              <span className="text-lg shrink-0">
+                {toast.type === 'keyword_match' ? '🎯' : '📡'}
+              </span>
+              <p className="text-xs text-slate-200 line-clamp-2">{toast.message}</p>
+              <button
+                onClick={() => setToast(null)}
+                className="text-slate-500 hover:text-slate-300 text-sm shrink-0 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 通知面板 */}
-      {showNotifications && (
-        <NotificationPanel
-          notifications={notifications}
-          unreadCount={unreadCount}
-          onClose={() => setShowNotifications(false)}
-          onMarkRead={handleMarkRead}
-          onMarkAllRead={handleMarkAllRead}
-        />
-      )}
+      <AnimatePresence>
+        {showNotifications && (
+          <NotificationPanel
+            notifications={notifications}
+            unreadCount={unreadCount}
+            onClose={() => setShowNotifications(false)}
+            onMarkRead={handleMarkRead}
+            onMarkAllRead={handleMarkAllRead}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

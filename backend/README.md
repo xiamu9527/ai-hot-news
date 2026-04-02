@@ -91,3 +91,9 @@ npm start       # 启动生产服务
 
 3. **摘要生成** (`summarizeNews`)
    - 将长文本新闻浓缩为一句话
+
+## 已修复的Bug
+
+| 日期 | 模块 | 描述 |
+|------|------|------|
+| 2026-04-02 | notificationService | `markAllAsRead()` SQL 逻辑错误：`SET read = 0 WHERE read = 0` 修改为 `SET read = 1 WHERE read = 0` |

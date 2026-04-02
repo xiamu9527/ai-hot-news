@@ -46,11 +46,11 @@ export function deleteKeyword(id: number): boolean {
 
 export function toggleKeyword(id: number, active: boolean): Keyword | undefined {
   const db = getDb()
-  db.prepare('UPDATE keywords SET active = ?, updatedAt = datetime("now") WHERE id = ?').run(active ? 1 : 0, id)
+  db.prepare(`UPDATE keywords SET active = ?, updatedAt = datetime('now') WHERE id = ?`).run(active ? 1 : 0, id)
   return getKeywordById(id)
 }
 
 export function updateLastChecked(id: number) {
   const db = getDb()
-  db.prepare('UPDATE keywords SET lastCheckedAt = datetime("now") WHERE id = ?').run(id)
+  db.prepare(`UPDATE keywords SET lastCheckedAt = datetime('now') WHERE id = ?`).run(id)
 }

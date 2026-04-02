@@ -72,13 +72,34 @@ export function stopScheduler() {
   logger.info('Scheduler stopped')
 }
 
-// 手动触发一次完整采集
+// 手动触发一次完整采集（遵守并发锁）
 export async function triggerCollection() {
   logger.info('Manual collection triggered')
-  await Promise.allSettled([
-    runHotspotCollector(),
-    runKeywordMonitor()
-  ])
+  const tasks: Promise<void>[] = []
+
+  if (!isRunningHotspot) {
+    isRunningHotspot = true
+    tasks.push(
+      runHotspotCollector()
+        .catch(err => { logger.error('Manual hotspot collection error:', err) })
+        .finally(() => { isRunningHotspot = false })
+    )
+  } else {
+    logger.warn('Hotspot collection already running, skipping')
+  }
+
+  if (!isRunningKeyword) {
+    isRunningKeyword = true
+    tasks.push(
+      runKeywordMonitor()
+        .catch(err => { logger.error('Manual keyword monitor error:', err) })
+        .finally(() => { isRunningKeyword = false })
+    )
+  } else {
+    logger.warn('Keyword monitor already running, skipping')
+  }
+
+  await Promise.allSettled(tasks)
 }
 
 async function runKeywordMonitor() {
@@ -98,6 +119,7 @@ async function runKeywordMonitor() {
         let confidence = 0
         let warnings: string[] = []
         let hotness = 0
+        let summary = item.content?.slice(0, 200) || ''
 
         try {
           const [verifyResult, hotnessResult] = await Promise.all([
@@ -114,10 +136,19 @@ async function runKeywordMonitor() {
           logger.warn('AI analysis unavailable, using default scores')
         }
 
+        // AI 生成摘要（仅对内容较长的条目）
+        if (item.content && item.content.length > 100) {
+          try {
+            summary = await aiEngine.summarizeNews(item.content)
+          } catch {
+            // 降级使用截断文本
+          }
+        }
+
         // 保存新闻
         const news = upsertNews({
           title: item.title,
-          summary: item.content?.slice(0, 200) || '',
+          summary,
           content: item.content || '',
           url: item.url,
           source: item.source,
@@ -176,19 +207,52 @@ async function runHotspotCollector() {
     // 广播热点更新事件
     broadcastSSE('hotspot_update', { timestamp: new Date().toISOString(), count: savedItems.length })
 
-    // 第二步：异步AI分析（只分析前10条，避免API调用过多）
-    const toAnalyze = savedItems.slice(0, 10)
+    // 第二步：批量 AI 分析热点评分（将标题一次性提交，减少API调用）
+    const titles = savedItems.map(s => s.item.title)
+    let topicScores: Array<{ title: string; score: number; category: string }> = []
+    try {
+      topicScores = await aiEngine.analyzeTopics('综合热点', titles)
+    } catch {
+      logger.warn('AI batch topic analysis unavailable')
+    }
+
+    // 用批量结果更新数据库
+    const { getDb } = await import('../models/database.js')
+    const db = getDb()
+
+    if (topicScores.length > 0) {
+      const scoreMap = new Map(topicScores.map(t => [t.title, t]))
+      for (const { item, newsId } of savedItems) {
+        const matched = scoreMap.get(item.title)
+        if (matched && matched.score > 0) {
+          db.prepare('UPDATE news SET hotness = ?, aiAnalysis = ? WHERE id = ?').run(
+            matched.score,
+            JSON.stringify(matched),
+            newsId
+          )
+        }
+      }
+      logger.info(`AI batch scored ${topicScores.length} items`)
+    }
+
+    // 第三步：对高热度条目逐条精细分析 + 生成摘要（前8条）
+    const toAnalyze = savedItems.slice(0, 8)
     for (const { item, newsId } of toAnalyze) {
       try {
         const hotnessResult = await aiEngine.detectHotness(item.title, item.content || '')
-        // 直接更新数据库
-        const { getDb } = await import('../models/database.js')
-        const db = getDb()
-        db.prepare('UPDATE news SET hotness = ?, aiAnalysis = ? WHERE id = ?').run(
-          hotnessResult.score,
-          JSON.stringify(hotnessResult),
-          newsId
-        )
+        // 生成AI摘要
+        let summary: string | undefined
+        if (item.content && item.content.length > 100) {
+          try { summary = await aiEngine.summarizeNews(item.content) } catch { /* skip */ }
+        }
+        const updateFields = summary
+          ? db.prepare('UPDATE news SET hotness = ?, aiAnalysis = ?, summary = ? WHERE id = ?')
+          : db.prepare('UPDATE news SET hotness = ?, aiAnalysis = ? WHERE id = ?')
+        if (summary) {
+          updateFields.run(hotnessResult.score, JSON.stringify(hotnessResult), summary, newsId)
+        } else {
+          updateFields.run(hotnessResult.score, JSON.stringify(hotnessResult), newsId)
+        }
         logger.info(`AI scored "${item.title.slice(0, 30)}..." → ${hotnessResult.score}`)
       } catch {
         // AI不可用就跳过

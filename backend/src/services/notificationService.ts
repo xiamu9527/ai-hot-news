@@ -80,7 +80,7 @@ export function markAsRead(id: number): boolean {
 
 export function markAllAsRead(): number {
   const db = getDb()
-  const result = db.prepare('UPDATE notifications SET read = 0 WHERE read = 0').run()
+  const result = db.prepare('UPDATE notifications SET read = 1 WHERE read = 0').run()
   return result.changes
 }
 

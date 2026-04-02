@@ -68,6 +68,46 @@
       "refreshInterval": 600000,
       "limit": 20,
       "note": "Web爬虫，支持微信公众号"
+    },
+    "baidu": {
+      "enabled": true,
+      "searchUrl": "https://www.baidu.com/s",
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "百度搜索+热搜榜，无需API Key"
+    },
+    "zhihu": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 15,
+      "note": "知乎搜索，无需API Key"
+    },
+    "toutiao": {
+      "enabled": true,
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "今日头条热榜，无需API Key"
+    },
+    "news36kr": {
+      "enabled": true,
+      "rssUrl": "https://36kr.com/feed",
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "36氪科技资讯，RSS订阅"
+    },
+    "ithome": {
+      "enabled": true,
+      "rssUrl": "https://www.ithome.com/rss/",
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "IT之家科技新闻，RSS订阅"
+    },
+    "huxiu": {
+      "enabled": true,
+      "rssUrl": "https://www.huxiu.com/rss/0.xml",
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "虎嗅科技资讯，RSS订阅"
     }
   },
   "ai": {
