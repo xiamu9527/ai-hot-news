@@ -1,7 +1,11 @@
 import axios, { AxiosInstance } from 'axios'
 import * as cheerio from 'cheerio'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { getConfig, Config } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
+
+const execFileAsync = promisify(execFile)
 
 export interface NewsItem {
   title: string
@@ -14,17 +18,55 @@ export interface NewsItem {
 export class Crawler {
   private client: AxiosInstance
   private config: Config
+  private readonly maxConcurrentSources = 4
+  private readonly maxConcurrentStoryFetches = 5
 
   constructor() {
     this.config = getConfig()
     this.client = axios.create({
       timeout: this.config.crawler.timeout,
+      maxContentLength: 2 * 1024 * 1024,
+      maxBodyLength: 2 * 1024 * 1024,
       headers: {
         'User-Agent': this.config.crawler.userAgent,
         'Accept': 'text/html,application/xhtml+xml,application/json',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       },
     })
+  }
+
+  private async runNewsTasks(taskFactories: Array<() => Promise<NewsItem[]>>, concurrency = this.maxConcurrentSources): Promise<NewsItem[]> {
+    const results: NewsItem[] = []
+
+    for (let index = 0; index < taskFactories.length; index += concurrency) {
+      const batch = taskFactories.slice(index, index + concurrency)
+      const settled = await Promise.allSettled(batch.map((task) => task()))
+
+      for (const result of settled) {
+        if (result.status === 'fulfilled') {
+          results.push(...result.value)
+        }
+      }
+    }
+
+    return results
+  }
+
+  private async runGenericTasks<T>(taskFactories: Array<() => Promise<T>>, concurrency: number): Promise<T[]> {
+    const results: T[] = []
+
+    for (let index = 0; index < taskFactories.length; index += concurrency) {
+      const batch = taskFactories.slice(index, index + concurrency)
+      const settled = await Promise.allSettled(batch.map((task) => task()))
+
+      for (const result of settled) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value)
+        }
+      }
+    }
+
+    return results
   }
 
   /**
@@ -71,156 +113,134 @@ export class Crawler {
    * 若关键词为博主/账号名称，优先获取该账号信息
    */
   async searchKeyword(keyword: string): Promise<NewsItem[]> {
-    const results: NewsItem[] = []
-    const tasks: Promise<NewsItem[]>[] = []
+    const taskFactories: Array<() => Promise<NewsItem[]>> = []
 
     // 账号模式检测：优先从对应平台获取账号信息
     const { isAccount, cleanName, types } = this.detectAccountKeyword(keyword)
     if (isAccount) {
       logger.info(`关键词 "${keyword}" 识别为账号，目标平台: ${types.join(', ')}，查询: "${cleanName}"`)
       if (types.includes('bilibili') && this.config.datasources.bili?.enabled) {
-        tasks.push(this.fetchBilibiliUser(cleanName))
+        taskFactories.push(() => this.fetchBilibiliUser(cleanName))
       }
       if (types.includes('weibo') && this.config.datasources.weibo?.enabled) {
-        tasks.push(this.fetchWeiboUser(cleanName))
+        taskFactories.push(() => this.fetchWeiboUser(cleanName))
       }
       if (types.includes('wechat') && this.config.datasources.sogou?.enabled) {
-        tasks.push(this.fetchWechatAccount(cleanName))
+        taskFactories.push(() => this.fetchWechatAccount(cleanName))
       }
     }
 
     if (this.config.datasources.hackerNews?.enabled) {
-      tasks.push(this.fetchFromHackerNews(keyword))
+      taskFactories.push(() => this.fetchFromHackerNews(keyword))
     }
     if (this.config.datasources.bing?.enabled) {
-      tasks.push(this.fetchFromBing([keyword]))
+      taskFactories.push(() => this.fetchFromBing([keyword]))
     }
     if (this.config.datasources.duckduckgo?.enabled) {
-      tasks.push(this.fetchFromDuckDuckGoAPI([keyword]))
+      taskFactories.push(() => this.fetchFromDuckDuckGoAPI([keyword]))
     }
-    if (this.config.datasources.twitter?.enabled !== false && this.config.datasources.twitter?.apiKey) {
-      tasks.push(this.fetchFromTwitter(keyword))
+    if (this.config.datasources.twitter?.enabled !== false) {
+      taskFactories.push(() => this.fetchFromTwitter(keyword))
     }
     if (this.config.datasources.google?.enabled) {
-      tasks.push(this.fetchFromGoogle([keyword]))
+      taskFactories.push(() => this.fetchFromGoogle([keyword]))
     }
     if (this.config.datasources.weibo?.enabled) {
-      tasks.push(this.fetchFromWeiboMobile(keyword))
-    }
-    if (this.config.datasources.bili?.enabled) {
-      tasks.push(this.fetchFromBilibili(keyword))
+      taskFactories.push(() => this.fetchFromWeiboMobile(keyword))
     }
     if (this.config.datasources.sogou?.enabled) {
-      tasks.push(this.fetchFromSogou(keyword))
+      taskFactories.push(() => this.fetchFromSogou(keyword))
     }
     if (this.config.datasources.baidu?.enabled) {
-      tasks.push(this.fetchFromBaidu(keyword))
+      taskFactories.push(() => this.fetchFromBaidu(keyword))
     }
     if (this.config.datasources.zhihu?.enabled) {
-      tasks.push(this.fetchFromZhihu(keyword))
+      taskFactories.push(() => this.fetchFromZhihu(keyword))
     }
     if (this.config.datasources.toutiao?.enabled) {
-      tasks.push(this.fetchFromToutiao(keyword))
+      taskFactories.push(() => this.fetchFromToutiao(keyword))
     }
     if (this.config.datasources.news36kr?.enabled) {
-      tasks.push(this.fetchFromRSS(
+      taskFactories.push(() => this.fetchFromRSS(
         this.config.datasources.news36kr?.rssUrl || 'https://36kr.com/feed',
         '36氪',
         keyword
       ))
     }
     if (this.config.datasources.ithome?.enabled) {
-      tasks.push(this.fetchFromRSS(
+      taskFactories.push(() => this.fetchFromRSS(
         this.config.datasources.ithome?.rssUrl || 'https://www.ithome.com/rss/',
         'IT之家',
         keyword
       ))
     }
     if (this.config.datasources.huxiu?.enabled) {
-      tasks.push(this.fetchFromRSS(
+      taskFactories.push(() => this.fetchFromRSS(
         this.config.datasources.huxiu?.rssUrl || 'https://www.huxiu.com/rss/0.xml',
         '虎嗅',
         keyword
       ))
     }
 
-    const settled = await Promise.allSettled(tasks)
-    for (const result of settled) {
-      if (result.status === 'fulfilled') {
-        results.push(...result.value)
-      }
-    }
-
-    return results
+    return this.runNewsTasks(taskFactories)
   }
 
   /**
    * 采集热点 - 不过滤关键词，获取所有热门内容
    */
   async collectHotspots(): Promise<NewsItem[]> {
-    const results: NewsItem[] = []
-    const tasks: Promise<NewsItem[]>[] = []
+    const taskFactories: Array<() => Promise<NewsItem[]>> = []
 
     if (this.config.datasources.hackerNews?.enabled) {
-      tasks.push(this.fetchFromHackerNews())
+      taskFactories.push(() => this.fetchFromHackerNews())
     }
     if (this.config.datasources.bing?.enabled) {
-      tasks.push(this.fetchFromBing(['AI', '人工智能', 'tech']))
+      taskFactories.push(() => this.fetchFromBing(['AI', '人工智能', 'tech']))
     }
     if (this.config.datasources.duckduckgo?.enabled) {
-      tasks.push(this.fetchFromDuckDuckGoAPI(['AI 人工智能']))
+      taskFactories.push(() => this.fetchFromDuckDuckGoAPI(['AI 人工智能']))
     }
-    if (this.config.datasources.twitter?.enabled !== false && this.config.datasources.twitter?.apiKey) {
-      tasks.push(this.fetchFromTwitterTrends())
+    if (this.config.datasources.twitter?.enabled !== false) {
+      taskFactories.push(() => this.fetchFromTwitterTrends())
     }
     if (this.config.datasources.google?.enabled) {
-      tasks.push(this.fetchFromGoogle(['AI 热点', 'tech news']))
+      taskFactories.push(() => this.fetchFromGoogle(['AI 热点', 'tech news']))
     }
     if (this.config.datasources.weibo?.enabled) {
-      tasks.push(this.fetchFromWeiboHot())
-    }
-    if (this.config.datasources.bili?.enabled) {
-      tasks.push(this.fetchFromBilibiliHot())
+      taskFactories.push(() => this.fetchFromWeiboHot())
     }
     if (this.config.datasources.sogou?.enabled) {
-      tasks.push(this.fetchFromSogou('AI 人工智能'))
+      taskFactories.push(() => this.fetchFromSogou('AI 人工智能'))
     }
     if (this.config.datasources.baidu?.enabled) {
-      tasks.push(this.fetchBaiduHot())
+      taskFactories.push(() => this.fetchBaiduHot())
     }
     if (this.config.datasources.zhihu?.enabled) {
-      tasks.push(this.fetchFromZhihu())
+      taskFactories.push(() => this.fetchFromZhihu())
     }
     if (this.config.datasources.toutiao?.enabled) {
-      tasks.push(this.fetchToutiaoHot())
+      taskFactories.push(() => this.fetchToutiaoHot())
     }
     if (this.config.datasources.news36kr?.enabled) {
-      tasks.push(this.fetchFromRSS(
+      taskFactories.push(() => this.fetchFromRSS(
         this.config.datasources.news36kr?.rssUrl || 'https://36kr.com/feed',
         '36氪'
       ))
     }
     if (this.config.datasources.ithome?.enabled) {
-      tasks.push(this.fetchFromRSS(
+      taskFactories.push(() => this.fetchFromRSS(
         this.config.datasources.ithome?.rssUrl || 'https://www.ithome.com/rss/',
         'IT之家'
       ))
     }
     if (this.config.datasources.huxiu?.enabled) {
-      tasks.push(this.fetchFromRSS(
+      taskFactories.push(() => this.fetchFromRSS(
         this.config.datasources.huxiu?.rssUrl || 'https://www.huxiu.com/rss/0.xml',
         '虎嗅'
       ))
     }
 
-    const settled = await Promise.allSettled(tasks)
-    for (const result of settled) {
-      if (result.status === 'fulfilled') {
-        results.push(...result.value)
-      }
-    }
-
-    return results
+    return this.runNewsTasks(taskFactories)
   }
 
   /**
@@ -233,13 +253,14 @@ export class Crawler {
       const topResponse = await this.client.get(`${config.apiUrl}/topstories.json`)
       const storyIds = topResponse.data.slice(0, config.limit || 20)
 
-      const stories = await Promise.all(
-        storyIds.map((id: number) =>
+      const stories = await this.runGenericTasks(
+        storyIds.map((id: number) => () =>
           this.client
             .get(`${config.apiUrl}/item/${id}.json`)
             .then((res) => res.data)
             .catch(() => null),
         ),
+        this.maxConcurrentStoryFetches,
       )
 
       let items = stories
@@ -443,35 +464,270 @@ export class Crawler {
     }
   }
 
+  private decodeSearchEngineUrl(urlRaw: string): string {
+    if (!urlRaw) return ''
+
+    const decodedUrl = urlRaw.replace(/&amp;/g, '&')
+    const redirectPatterns = [
+      /[?&]uddg=([^&]+)/i,
+      /[?&]rut=([^&]+)/i,
+      /[?&]u=([^&]+)/i,
+    ]
+
+    for (const pattern of redirectPatterns) {
+      const match = decodedUrl.match(pattern)
+      if (match?.[1]) {
+        try {
+          return decodeURIComponent(match[1])
+        } catch {
+          return match[1]
+        }
+      }
+    }
+
+    return decodedUrl
+  }
+
+  private normalizeTwitterUrl(urlRaw: string): string | null {
+    const decodedUrl = this.decodeSearchEngineUrl(urlRaw).trim()
+    if (!decodedUrl) return null
+
+    try {
+      const normalized = decodedUrl.startsWith('//') ? `https:${decodedUrl}` : decodedUrl
+      const url = new URL(normalized)
+      const hostname = url.hostname.toLowerCase()
+      if (!hostname.endsWith('x.com') && !hostname.endsWith('twitter.com')) {
+        return null
+      }
+
+      url.hash = ''
+      return url.toString()
+    } catch {
+      return null
+    }
+  }
+
+  private isSearchChallengePage(html: string): boolean {
+    const normalizedHtml = html.toLowerCase()
+    return normalizedHtml.includes('anomaly-modal')
+      || normalizedHtml.includes('select all squares containing')
+      || normalizedHtml.includes('challenge-form')
+      || normalizedHtml.includes('captcha')
+  }
+
+  private async fetchSearchHtml(url: string, params: Record<string, string>, headers: Record<string, string> = {}): Promise<string> {
+    try {
+      const response = await this.client.get(url, {
+        params,
+        headers,
+        timeout: 15000,
+      })
+
+      return typeof response.data === 'string' ? response.data : ''
+    } catch (error) {
+      if (process.platform !== 'win32') {
+        throw error
+      }
+
+      logger.warn(`Axios search request failed, falling back to PowerShell: ${url}`, error)
+
+      const fullUrl = new URL(url)
+      Object.entries(params).forEach(([key, value]) => {
+        fullUrl.searchParams.set(key, value)
+      })
+
+      const headerLiteral = Object.entries(headers)
+        .map(([key, value]) => `'${key.replace(/'/g, "''")}'='${value.replace(/'/g, "''")}'`)
+        .join('; ')
+
+      const script = [
+        "$ProgressPreference='SilentlyContinue'",
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
+        headerLiteral
+          ? `$headers=@{${headerLiteral}}; $response=Invoke-WebRequest -UseBasicParsing -Uri '${fullUrl.toString().replace(/'/g, "''")}' -Headers $headers -TimeoutSec 20`
+          : `$response=Invoke-WebRequest -UseBasicParsing -Uri '${fullUrl.toString().replace(/'/g, "''")}' -TimeoutSec 20`,
+        '$response.Content',
+      ].join('; ')
+
+      const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
+        timeout: 25000,
+        maxBuffer: 4 * 1024 * 1024,
+      })
+
+      return stdout
+    }
+  }
+
+  private extractTwitterSearchResults(html: string, sourceLabel: string): NewsItem[] {
+    const $ = cheerio.load(html)
+    const items: NewsItem[] = []
+    const seen = new Set<string>()
+
+    $('.result, .b_algo').each((_, el) => {
+      const titleLink = $(el).find('.result__title a, .result__a, h2 a').first()
+      const snippet = $(el).find('.result__snippet, .b_caption p').first().text().trim()
+      const title = titleLink.text().trim() || snippet.slice(0, 120)
+      const normalizedUrl = this.normalizeTwitterUrl(titleLink.attr('href') || '')
+
+      if (!title || !normalizedUrl || seen.has(normalizedUrl)) {
+        return
+      }
+
+      seen.add(normalizedUrl)
+      items.push({
+        title: title.replace(/\s+/g, ' ').trim(),
+        url: normalizedUrl,
+        content: snippet,
+        source: sourceLabel,
+      })
+    })
+
+    return items
+  }
+
+  private extractTwitterResultsFromBrave(html: string): NewsItem[] {
+    const $ = cheerio.load(html)
+    const items: NewsItem[] = []
+    const seen = new Set<string>()
+
+    $('.snippet[data-type="web"]').each((_, el) => {
+      const link = $(el).find('a[href]').first()
+      const normalizedUrl = this.normalizeTwitterUrl(link.attr('href') || '')
+      const titleEl = $(el).find('.title.search-snippet-title').first()
+      const snippetEl = $(el).find('.generic-snippet .content').first()
+      const title = titleEl.attr('title')?.trim() || titleEl.text().trim() || snippetEl.text().trim().slice(0, 120)
+      const snippet = snippetEl.text().replace(/\s+/g, ' ').trim()
+
+      if (!title || !normalizedUrl || seen.has(normalizedUrl)) {
+        return
+      }
+
+      seen.add(normalizedUrl)
+      items.push({
+        title: title.replace(/\s+/g, ' ').trim(),
+        url: normalizedUrl,
+        content: snippet,
+        source: 'Twitter',
+      })
+    })
+
+    return items
+  }
+
+  private extractTwitterResultsFromMojeek(html: string): NewsItem[] {
+    const $ = cheerio.load(html)
+    const items: NewsItem[] = []
+    const seen = new Set<string>()
+
+    $('ul.results-standard li').each((_, el) => {
+      const titleLink = $(el).find('h2 a.title').first()
+      const normalizedUrl = this.normalizeTwitterUrl(titleLink.attr('href') || '')
+      const title = titleLink.text().trim() || titleLink.attr('title')?.trim() || ''
+      const snippet = $(el).find('p.s, p.i').text().replace(/\s+/g, ' ').trim()
+
+      if (!title || !normalizedUrl || seen.has(normalizedUrl)) {
+        return
+      }
+
+      seen.add(normalizedUrl)
+      items.push({
+        title: title.replace(/\s+/g, ' ').trim(),
+        url: normalizedUrl,
+        content: snippet,
+        source: 'Twitter',
+      })
+    })
+
+    return items
+  }
+
+  private async fetchTwitterViaSearchEngine(keyword: string): Promise<NewsItem[]> {
+    const searchQueries = [
+      `site:x.com \"${keyword}\"`,
+      `site:x.com ${keyword}`,
+    ]
+
+    const searchSources: Array<{
+      name: string
+      url: string
+      buildParams: (query: string) => Record<string, string>
+      extract: (html: string) => NewsItem[]
+      headers?: Record<string, string>
+    }> = [
+      {
+        name: 'Brave Search',
+        url: 'https://search.brave.com/search',
+        buildParams: (query) => ({ q: query, source: 'web' }),
+        extract: (html) => this.extractTwitterResultsFromBrave(html),
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml',
+          'Referer': 'https://search.brave.com/',
+          'User-Agent': this.config.crawler.userAgent,
+        },
+      },
+      {
+        name: 'Mojeek',
+        url: 'https://www.mojeek.com/search',
+        buildParams: (query) => ({ q: query }),
+        extract: (html) => this.extractTwitterResultsFromMojeek(html),
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml',
+          'Referer': 'https://www.mojeek.com/',
+          'User-Agent': this.config.crawler.userAgent,
+        },
+      },
+      {
+        name: 'DuckDuckGo HTML',
+        url: 'https://html.duckduckgo.com/html/',
+        buildParams: (query) => ({ q: query, kl: 'wt-wt' }),
+        extract: (html) => this.extractTwitterSearchResults(html, 'Twitter'),
+        headers: {
+          'Accept': 'text/html',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Origin': 'https://duckduckgo.com',
+          'Referer': 'https://duckduckgo.com/',
+          'User-Agent': this.config.crawler.userAgent,
+        },
+      },
+    ]
+
+    for (const query of searchQueries) {
+      for (const source of searchSources) {
+        try {
+          const html = await this.fetchSearchHtml(source.url, source.buildParams(query), source.headers)
+
+          if (!html || this.isSearchChallengePage(html)) {
+            logger.warn(`${source.name} search challenge triggered for Twitter query: ${query}`)
+            continue
+          }
+
+          const items = source.extract(html)
+          if (items.length > 0) {
+            return items
+          }
+        } catch (error) {
+          logger.warn(`${source.name} Twitter crawler failed for query: ${query}`, error)
+        }
+      }
+    }
+
+    return []
+  }
+
   // ============================================================
-  //  Twitter/X (via twitterapi.io)
+  //  Twitter/X (crawler only)
   // ============================================================
 
   /**
-   * 从 Twitter 搜索关键词 (twitterapi.io Advanced Search)
+   * 从 Twitter/X 搜索关键词（通过搜索引擎抓取公开 x.com 结果）
    */
   async fetchFromTwitter(keyword: string): Promise<NewsItem[]> {
     logger.info(`Fetching from Twitter: "${keyword}"`)
     try {
-      const apiKey = this.config.datasources.twitter?.apiKey
-      if (!apiKey) return []
-
-      const response = await this.client.get('https://api.twitterapi.io/twitter/tweet/advanced_search', {
-        params: { query: keyword, queryType: 'Top' },
-        headers: { 'X-API-Key': apiKey },
-        timeout: 15000,
-      })
-
-      const tweets = response.data?.tweets || []
       const limit = this.config.datasources.twitter?.limit || 15
+      const items = await this.fetchTwitterViaSearchEngine(keyword)
 
-      return tweets.slice(0, limit).map((tweet: any) => ({
-        title: (tweet.text || '').slice(0, 120).replace(/\n/g, ' '),
-        url: tweet.url || `https://x.com/i/status/${tweet.id}`,
-        content: tweet.text || '',
-        source: 'Twitter',
-        publishedAt: tweet.createdAt ? new Date(tweet.createdAt).toISOString() : undefined,
-      }))
+      return items.slice(0, limit)
     } catch (error) {
       logger.error('Error fetching from Twitter:', error)
       return []
@@ -479,30 +735,33 @@ export class Crawler {
   }
 
   /**
-   * 从 Twitter 获取趋势热点 (twitterapi.io Trends)
+   * 从 Twitter 获取趋势热点 (使用网页爬虫作为 fallback 或主力, 直接从 trends24.in 获取当日全球热榜)
    */
   async fetchFromTwitterTrends(): Promise<NewsItem[]> {
-    logger.info('Fetching Twitter trends')
+    logger.info('Fetching Twitter trends data')
     try {
-      const apiKey = this.config.datasources.twitter?.apiKey
-      if (!apiKey) return []
+      if (this.config.datasources.twitter?.enabled === false) return []
 
-      // woeid=1 为全球趋势, 23424977=美国, 23424856=中国
-      const response = await this.client.get('https://api.twitterapi.io/twitter/trends', {
-        params: { woeid: 1, count: 30 },
-        headers: { 'X-API-Key': apiKey },
+      const response = await this.client.get('https://trends24.in/', {
         timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
       })
 
-      if (response.data?.status !== 'success') return []
+      const $ = cheerio.load(response.data)
+      const trends: Array<{ name: string }> = []
+      $('ol.trend-card__list').first().find('li').each((_, el) => {
+        const name = $(el).find('a').text().trim()
+        if (name) trends.push({ name })
+      })
 
-      const trends = response.data?.trends || []
       const limit = this.config.datasources.twitter?.limit || 15
 
-      return trends.slice(0, limit).map((trend: any) => ({
-        title: trend.name || '',
-        url: `https://x.com/search?q=${encodeURIComponent(trend.target?.query || trend.name)}`,
-        content: trend.meta_description || `Twitter 热门话题 #${trend.rank}: ${trend.name}`,
+      return trends.slice(0, limit).map((trend, index) => ({
+        title: trend.name,
+        url: `https://x.com/search?q=${encodeURIComponent(trend.name)}`,
+        content: `Twitter 实时全球热榜 #${index + 1}: ${trend.name}`,
         source: 'Twitter',
       }))
     } catch (error) {

@@ -20,6 +20,7 @@ export interface NewsItem {
 export interface NewsQueryOptions {
   source?: string
   keyword?: string
+  keywordId?: number
   limit?: number
   offset?: number
   minHotness?: number
@@ -27,30 +28,36 @@ export interface NewsQueryOptions {
 
 export function getNewsList(options: NewsQueryOptions = {}): { data: NewsItem[]; total: number } {
   const db = getDb()
-  const { source, keyword, limit = 30, offset = 0, minHotness } = options
+  const { source, keyword, keywordId, limit = 30, offset = 0, minHotness } = options
 
   let where = 'WHERE 1=1'
   const params: any[] = []
 
   if (source && source !== 'all') {
-    where += ' AND source = ?'
+    where += ' AND n.source = ?'
     params.push(source)
   }
   if (keyword) {
-    where += ' AND (title LIKE ? OR summary LIKE ?)'
+    where += ' AND (n.title LIKE ? OR n.summary LIKE ?)'
     const like = `%${keyword}%`
     params.push(like, like)
   }
+  if (keywordId !== undefined) {
+    where += ' AND EXISTS (SELECT 1 FROM keyword_matches km WHERE km.newsId = n.id AND km.keywordId = ?)'
+    params.push(keywordId)
+  }
   if (minHotness !== undefined) {
-    where += ' AND hotness >= ?'
+    where += ' AND n.hotness >= ?'
     params.push(minHotness)
   }
 
-  const countRow = db.prepare(`SELECT COUNT(*) as count FROM news ${where}`).get(...params) as any
+  const countRow = db.prepare(`SELECT COUNT(*) as count FROM news n ${where}`).get(...params) as any
   const total = countRow.count
 
   const data = db.prepare(
-    `SELECT * FROM news ${where} ORDER BY hotness DESC, createdAt DESC LIMIT ? OFFSET ?`
+    `SELECT n.*, (
+      SELECT 1 FROM keyword_matches km WHERE km.newsId = n.id LIMIT 1
+    ) AS isMatch FROM news n ${where} ORDER BY isMatch DESC, n.hotness DESC, n.createdAt DESC LIMIT ? OFFSET ?`
   ).all(...params, limit, offset) as NewsItem[]
 
   return { data, total }

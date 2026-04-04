@@ -4,6 +4,7 @@ import { useSSE } from '@/hooks/useSSE'
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from '@/utils/api'
 import type { Notification } from '@/types'
 import { Spotlight } from '@/components/ui/spotlight'
+import { BackgroundBeams } from '@/components/ui/background-beams'
 import { FloatingDock } from '@/components/ui/floating-dock'
 import NewsPage from '@/pages/NewsPage'
 import MonitorPage from '@/pages/MonitorPage'
@@ -188,9 +189,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 relative overflow-hidden">
       {/* 背景效果 */}
-      <div className="fixed inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(8,145,178,0.08),transparent)] pointer-events-none" />
-      <div className="fixed top-0 left-1/4 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[150px] pointer-events-none" />
-      <div className="fixed bottom-0 right-1/4 w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[150px] pointer-events-none" />
+      <BackgroundBeams className="fixed inset-0 pointer-events-none z-0" />
+      <div className="fixed top-0 left-1/4 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[150px] pointer-events-none z-0" />
+      <div className="fixed bottom-0 right-1/4 w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[150px] pointer-events-none z-0" />
 
       {/* Header with Spotlight */}
       <header className="sticky top-0 z-40 border-b border-slate-800/60 bg-slate-950/80 backdrop-blur-xl overflow-hidden">

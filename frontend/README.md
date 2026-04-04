@@ -61,7 +61,10 @@ frontend/
 - **鼠标跟踪发光** - GlowingCard组件实现径向渐变跟随
 - **弹性动画** - framer-motion spring物理动画
 - **微光效果** - Shimmer/Spotlight等光效组件
-- **渐变边框** - BackgroundGradient渐变边框包装器
+- **流星特效** - Meteors 组件实现流星雨空状态
+- **背景光柱** - BackgroundBeams 实现全屏发光线条
+- **打字机特效** - TextGenerateEffect 实现逐字揭示效果
+- **渐变外框** - BackgroundGradient 为热点新闻增加高光流金边框
 
 ### 主要配色
 - **主背景** `bg-slate-950` (#020617)

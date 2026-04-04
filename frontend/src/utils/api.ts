@@ -18,6 +18,7 @@ const api = axios.create({
 export async function fetchNews(params?: {
   source?: string
   keyword?: string
+  keywordId?: number
   limit?: number
   offset?: number
 }): Promise<NewsListResponse> {

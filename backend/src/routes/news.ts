@@ -7,10 +7,11 @@ const router = Router()
 // GET /api/news - 获取热点新闻列表
 router.get('/', (req: Request, res: Response) => {
   try {
-    const { source, keyword, limit, offset, minHotness } = req.query
+    const { source, keyword, keywordId, limit, offset, minHotness } = req.query
     const result = getNewsList({
       source: source as string,
       keyword: keyword as string,
+      keywordId: keywordId ? parseInt(keywordId as string) : undefined,
       limit: limit ? parseInt(limit as string) : undefined,
       offset: offset ? parseInt(offset as string) : undefined,
       minHotness: minHotness ? parseInt(minHotness as string) : undefined,

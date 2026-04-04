@@ -56,7 +56,7 @@
       "note": "Web爬虫"
     },
     "bili": {
-      "enabled": true,
+      "enabled": false,
       "searchUrl": "https://search.bilibili.com/all",
       "refreshInterval": 900000,
       "limit": 15,

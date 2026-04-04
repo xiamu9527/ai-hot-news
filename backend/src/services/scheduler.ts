@@ -110,8 +110,32 @@ async function runKeywordMonitor() {
 
   for (const kw of keywords) {
     try {
-      // 从多个源搜索关键词
-      const results = await crawler.searchKeyword(kw.keyword)
+      // 通过 AI 引擎进行语义扩展
+      let variants = [kw.keyword]
+      try {
+        variants = await aiEngine.expandKeyword(kw.keyword)
+        logger.info(`Keyword "${kw.keyword}" expanded to: ${variants.join(', ')}`)
+      } catch (err) {
+        logger.warn(`Failed to expand keyword "${kw.keyword}", using original.`)
+      }
+
+      // 针对扩展出来的每个变体并行进行爬取搜索，并合并去重
+      const allResultsP: Promise<any[]>[] = variants.map(v => crawler.searchKeyword(v))
+      const nestedResults = await Promise.allSettled(allResultsP)
+      
+      const combinedResults = new Map() // 用 URL 作为主键去重
+      for (const res of nestedResults) {
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          for (const item of res.value) {
+            if (!combinedResults.has(item.url)) {
+              combinedResults.set(item.url, item)
+            }
+          }
+        }
+      }
+      
+      const results = Array.from(combinedResults.values())
+      logger.info(`Found ${results.length} total unique results for keyword "${kw.keyword}" variants`)
 
       for (const item of results) {
         // AI 验证内容真实性
@@ -119,6 +143,7 @@ async function runKeywordMonitor() {
         let confidence = 0
         let warnings: string[] = []
         let hotness = 0
+        let aiAnalysis: Record<string, unknown> = {}
         let summary = item.content?.slice(0, 200) || ''
 
         try {
@@ -130,19 +155,25 @@ async function runKeywordMonitor() {
           confidence = verifyResult.confidence
           warnings = verifyResult.warnings
           hotness = hotnessResult.score
+          aiAnalysis = hotnessResult
         } catch {
           // AI 不可用时降级处理
           hotness = 30
+          aiAnalysis = {
+            isHotness: false,
+            score: 30,
+            reasoning: 'AI分析不可用'
+          }
           logger.warn('AI analysis unavailable, using default scores')
         }
 
-        // AI 生成摘要（仅对内容较长的条目）
-        if (item.content && item.content.length > 100) {
-          try {
-            summary = await aiEngine.summarizeNews(item.content)
-          } catch {
-            // 降级使用截断文本
-          }
+        // AI 生成摘要并翻译（对所有记录调用以支持短标题的翻译）
+        try {
+          const res = await aiEngine.summarizeNews(item.title, item.content || '')
+          item.title = res.title || item.title
+          summary = res.summary || summary
+        } catch {
+          // 降级使用原有信息
         }
 
         // 保存新闻
@@ -156,6 +187,7 @@ async function runKeywordMonitor() {
           verified,
           verifyConfidence: confidence,
           verifyWarnings: warnings,
+          aiAnalysis,
           publishedAt: item.publishedAt
         })
 
@@ -190,7 +222,15 @@ async function runHotspotCollector() {
 
     // 第一步：先全部入库（无AI分析，确保数据不丢失）
     const savedItems: Array<{ item: any; newsId: number }> = []
-    for (const item of allItems.slice(0, 30)) {
+
+    // 取消全局截断，保留各个数据源的独立配置返回额度
+    // 采用随机洗牌的方法让不同数据源公平合并并全量入库
+    for (let i = allItems.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[allItems[i], allItems[j]] = [allItems[j], allItems[i]]
+    }
+
+    for (const item of allItems) {
       const news = upsertNews({
         title: item.title,
         summary: item.content?.slice(0, 200) || '',
@@ -235,31 +275,34 @@ async function runHotspotCollector() {
       logger.info(`AI batch scored ${topicScores.length} items`)
     }
 
-    // 第三步：对高热度条目逐条精细分析 + 生成摘要（前8条）
+    // 第三步：对高热度条目逐条精细分析 + 生成摘要或翻译（前8条）
     const toAnalyze = savedItems.slice(0, 8)
-    for (const { item, newsId } of toAnalyze) {
+    await Promise.all(toAnalyze.map(async ({ item, newsId }) => {
       try {
         const hotnessResult = await aiEngine.detectHotness(item.title, item.content || '')
-        // 生成AI摘要
-        let summary: string | undefined
-        if (item.content && item.content.length > 100) {
-          try { summary = await aiEngine.summarizeNews(item.content) } catch { /* skip */ }
-        }
-        const updateFields = summary
-          ? db.prepare('UPDATE news SET hotness = ?, aiAnalysis = ?, summary = ? WHERE id = ?')
-          : db.prepare('UPDATE news SET hotness = ?, aiAnalysis = ? WHERE id = ?')
-        if (summary) {
-          updateFields.run(hotnessResult.score, JSON.stringify(hotnessResult), summary, newsId)
-        } else {
-          updateFields.run(hotnessResult.score, JSON.stringify(hotnessResult), newsId)
-        }
-        logger.info(`AI scored "${item.title.slice(0, 30)}..." → ${hotnessResult.score}`)
-      } catch {
-        // AI不可用就跳过
-      }
-    }
 
-    logger.info('Hotspot collection completed')
+        // 强制进行标题和摘要的提取与语言翻译
+        let summary: string | undefined
+        try {
+          const trans = await aiEngine.summarizeNews(item.title, item.content || '')
+          item.title = trans.title || item.title
+          summary = trans.summary || item.content?.slice(0, 200) || ''
+        } catch { /* skip */ }
+
+        const updateFields = summary
+          ? db.prepare('UPDATE news SET title = ?, hotness = ?, aiAnalysis = ?, summary = ? WHERE id = ?')
+          : db.prepare('UPDATE news SET title = ?, hotness = ?, aiAnalysis = ? WHERE id = ?')
+
+        if (summary) {
+          updateFields.run(item.title, hotnessResult.score, JSON.stringify(hotnessResult), summary, newsId)
+        } else {
+          updateFields.run(item.title, hotnessResult.score, JSON.stringify(hotnessResult), newsId)
+        }
+        logger.info(`AI processed "${item.title.slice(0, 20)}..." -> Hotness: ${hotnessResult.score}`)
+      } catch (err) {
+        logger.warn(`Failed to analyze news ${newsId}`)
+      }
+    }))
   } catch (err) {
     logger.error('Hotspot collection error:', err)
   }

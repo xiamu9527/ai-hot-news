@@ -1,16 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import NewsPage from '@/pages/NewsPage'
-import type { NewsItem, NewsStats } from '@/types'
+import type { Keyword, NewsItem, NewsStats } from '@/types'
 
 // Mock api module
 vi.mock('@/utils/api', () => ({
+  fetchKeywords: vi.fn(),
   fetchNews: vi.fn(),
   fetchNewsStats: vi.fn(),
   refreshNews: vi.fn(),
 }))
 
-import { fetchNews, fetchNewsStats, refreshNews } from '@/utils/api'
+import { fetchKeywords, fetchNews, fetchNewsStats, refreshNews } from '@/utils/api'
 
 const mockNews: NewsItem[] = [
   {
@@ -24,7 +25,7 @@ const mockNews: NewsItem[] = [
     verified: 1,
     verifyConfidence: 0.92,
     verifyWarnings: '[]',
-    aiAnalysis: '{}',
+    aiAnalysis: '{"reasoning":"该新闻直接涉及 AI 大模型发布，和当前热点主题高度相关。"}',
     publishedAt: '2026-04-01T10:00:00Z',
     createdAt: '2026-04-01T10:00:00Z',
   },
@@ -54,7 +55,7 @@ const mockNews: NewsItem[] = [
     verified: 0,
     verifyConfidence: 0.8,
     verifyWarnings: '["标题过于夸张","缺少可靠来源"]',
-    aiAnalysis: '{}',
+    aiAnalysis: '{"reasoning":"验证结果显示这条内容存在明显夸张和来源不足问题。"}',
     publishedAt: null,
     createdAt: '2026-04-01T08:00:00Z',
   },
@@ -66,6 +67,28 @@ const mockStats: NewsStats = {
   avgHotness: 58.3,
 }
 
+const mockKeywords: Keyword[] = [
+  {
+    id: 11,
+    keyword: 'OpenAI',
+    scope: 'AI',
+    active: 1,
+    lastCheckedAt: null,
+    createdAt: '2026-04-01T00:00:00Z',
+    updatedAt: '2026-04-01T00:00:00Z',
+  },
+  {
+    id: 12,
+    keyword: '量子计算',
+    scope: '',
+    active: 1,
+    lastCheckedAt: null,
+    createdAt: '2026-04-01T00:00:00Z',
+    updatedAt: '2026-04-01T00:00:00Z',
+  },
+]
+
+const mockedFetchKeywords = fetchKeywords as ReturnType<typeof vi.fn>
 const mockedFetchNews = fetchNews as ReturnType<typeof vi.fn>
 const mockedFetchNewsStats = fetchNewsStats as ReturnType<typeof vi.fn>
 const mockedRefreshNews = refreshNews as ReturnType<typeof vi.fn>
@@ -73,6 +96,7 @@ const mockedRefreshNews = refreshNews as ReturnType<typeof vi.fn>
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  mockedFetchKeywords.mockResolvedValue({ keywords: mockKeywords })
   mockedFetchNews.mockResolvedValue({ data: mockNews, total: 3 })
   mockedFetchNewsStats.mockResolvedValue(mockStats)
   mockedRefreshNews.mockResolvedValue(undefined)
@@ -91,10 +115,13 @@ describe('NewsPage', () => {
     expect(screen.getByText('活跃源')).toBeInTheDocument()
     expect(screen.getByText('平均热度')).toBeInTheDocument()
     expect(screen.getByText('我的收藏')).toBeInTheDocument()
+    expect(screen.getByText('筛选维度')).toBeInTheDocument()
+    expect(screen.getByText('排序方式')).toBeInTheDocument()
 
     // 新闻标题
     expect(screen.getByText('量子计算最新进展')).toBeInTheDocument()
     expect(screen.getByText('可疑的假新闻')).toBeInTheDocument()
+    expect(screen.getByText('该新闻直接涉及 AI 大模型发布，和当前热点主题高度相关。')).toBeInTheDocument()
   })
 
   it('默认按热度排序', async () => {
@@ -104,8 +131,7 @@ describe('NewsPage', () => {
       expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
     })
 
-    // 第一条应该是热度最高的（85）
-    const titles = screen.getAllByText(/AI大模型|量子计算|可疑的假新闻/)
+    const titles = screen.getAllByRole('heading', { level: 3 })
     expect(titles[0].textContent).toContain('AI大模型突破性进展')
   })
 
@@ -116,10 +142,9 @@ describe('NewsPage', () => {
       expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
     })
 
-    // 已验证徽章（含百分比）
-    expect(screen.getByText(/✓ 已验证 92%/)).toBeInTheDocument()
-    // 可疑徽章
-    expect(screen.getByText(/⚠ 可疑 80%/)).toBeInTheDocument()
+    expect(screen.getByText(/✓ 已验证 · 置信度 92%/)).toBeInTheDocument()
+    expect(screen.getByText(/⚠ 可疑 · 置信度 80%/)).toBeInTheDocument()
+    expect(screen.getByText('⏳ 待验证')).toBeInTheDocument()
   })
 
   it('搜索功能生效', async () => {
@@ -183,15 +208,46 @@ describe('NewsPage', () => {
       expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
     })
 
-    // 切换到最新排序
-    const latestBtn = screen.getByText('🕐 最新')
-    fireEvent.click(latestBtn)
+    const publishedBtn = screen.getByText('📰 最新发布')
+    fireEvent.click(publishedBtn)
 
-    // 切换到已验证排序
-    const verifiedBtn = screen.getByText('✓ 已验证')
-    fireEvent.click(verifiedBtn)
+    const importanceBtn = screen.getByText('🚨 重要程度')
+    fireEvent.click(importanceBtn)
 
     // 不应报错，同时应该有排序效果
+    expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
+  })
+
+  it('关键词筛选会带 keywordId 请求参数', async () => {
+    render(<NewsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
+    })
+
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[1], { target: { value: '11' } })
+
+    await waitFor(() => {
+      expect(mockedFetchNews).toHaveBeenCalledWith(
+        expect.objectContaining({ keywordId: 11 })
+      )
+    })
+  })
+
+  it('重要性筛选会过滤低优先级新闻', async () => {
+    render(<NewsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
+    })
+
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[0], { target: { value: 'high' } })
+
+    await waitFor(() => {
+      expect(screen.queryByText('可疑的假新闻')).not.toBeInTheDocument()
+    })
     expect(screen.getByText('AI大模型突破性进展')).toBeInTheDocument()
   })
 

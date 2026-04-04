@@ -13,7 +13,6 @@ const SOURCE_LABELS: Record<string, string> = {
   duckduckgo: 'DuckDuckGo',
   twitter: 'Twitter / X',
   weibo: '微博',
-  bili: 'B站',
   sogou: '搜狗/微信',
 }
 
@@ -24,7 +23,6 @@ const SOURCE_ICONS: Record<string, string> = {
   duckduckgo: '🦆',
   twitter: '🐦',
   weibo: '📱',
-  bili: '📺',
   sogou: '🔍',
 }
 
@@ -35,7 +33,6 @@ const SOURCE_GRADIENT: Record<string, string> = {
   duckduckgo: 'from-green-500/10 to-emerald-500/5',
   twitter: 'from-sky-500/10 to-blue-500/5',
   weibo: 'from-rose-500/10 to-pink-500/5',
-  bili: 'from-blue-500/10 to-indigo-500/5',
   sogou: 'from-purple-500/10 to-violet-500/5',
 }
 
@@ -220,7 +217,7 @@ export default function SettingsPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {settings &&
-                Object.entries(settings.dataSources).map(([key, val], idx) => (
+                Object.entries(settings.dataSources).filter(([key]) => key !== 'bili').map(([key, val], idx) => (
                   <motion.div
                     key={key}
                     initial={{ opacity: 0, scale: 0.95 }}

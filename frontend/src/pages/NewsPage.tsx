@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+﻿import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { NewsItem, NewsStats } from '@/types'
-import { fetchNews, fetchNewsStats, refreshNews } from '@/utils/api'
+import type { Keyword, NewsItem, NewsStats } from '@/types'
+import { fetchKeywords, fetchNews, fetchNewsStats, refreshNews } from '@/utils/api'
 import { cn } from '@/lib/utils'
 import { GlowingCard } from '@/components/ui/glowing-card'
 import { BentoGrid, BentoGridItem } from '@/components/ui/bento-grid'
 import { ShimmerButton } from '@/components/ui/shimmer-button'
 import { Meteors } from '@/components/ui/meteors'
+import { TextGenerateEffect } from '@/components/ui/text-generate-effect'
+import { BackgroundGradient } from '@/components/ui/background-gradient'
 
 // ────────── 数据源配置 ──────────
 const SOURCE_CONFIG: Record<string, { label: string; icon: string; color: string; gradient: string }> = {
@@ -17,11 +19,130 @@ const SOURCE_CONFIG: Record<string, { label: string; icon: string; color: string
   DuckDuckGo:  { label: 'DuckDuckGo',  icon: '🦆', color: 'green',  gradient: 'from-green-500/20 to-emerald-500/10' },
   Twitter:     { label: 'Twitter',     icon: '🐦', color: 'sky',    gradient: 'from-sky-500/20 to-blue-400/10' },
   微博:        { label: '微博',        icon: '📱', color: 'rose',   gradient: 'from-rose-500/20 to-pink-500/10' },
-  B站:         { label: 'B站',         icon: '📺', color: 'indigo', gradient: 'from-blue-500/20 to-indigo-500/10' },
   搜狗:        { label: '搜狗',        icon: '🔍', color: 'purple', gradient: 'from-purple-500/20 to-violet-500/10' },
 }
 
 type SortMode = 'hotness' | 'latest' | 'verified'
+
+type ImportanceLevel = 'all' | 'urgent' | 'high' | 'medium' | 'low'
+type TimeRange = 'all' | '1h' | '6h' | '24h' | '7d'
+type AdvancedSortMode = 'hotness' | 'relevance' | 'published' | 'discovered' | 'importance'
+
+type ParsedAiAnalysis = {
+  reasoning?: string
+  category?: string
+  importance?: string
+  score?: number
+}
+
+const IMPORTANCE_LABELS: Record<Exclude<ImportanceLevel, 'all'>, string> = {
+  urgent: '紧急',
+  high: '高',
+  medium: '中',
+  low: '低',
+}
+
+const TIME_RANGE_OPTIONS: Array<{ value: TimeRange; label: string }> = [
+  { value: 'all', label: '全部时间' },
+  { value: '1h', label: '最近 1 小时' },
+  { value: '6h', label: '最近 6 小时' },
+  { value: '24h', label: '最近 24 小时' },
+  { value: '7d', label: '最近 7 天' },
+]
+
+const SORT_OPTIONS: Array<{ key: AdvancedSortMode; label: string }> = [
+  { key: 'hotness', label: '🔥 热度综合' },
+  { key: 'relevance', label: '🎯 相关性' },
+  { key: 'published', label: '📰 最新发布' },
+  { key: 'discovered', label: '🕵 最新发现' },
+  { key: 'importance', label: '🚨 重要程度' },
+]
+
+function parseAiAnalysis(item: NewsItem): ParsedAiAnalysis {
+  try {
+    return item.aiAnalysis ? JSON.parse(item.aiAnalysis) as ParsedAiAnalysis : {}
+  } catch {
+    return {}
+  }
+}
+
+function normalizeImportance(raw?: string): Exclude<ImportanceLevel, 'all'> | null {
+  if (!raw) return null
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === 'urgent' || normalized === 'high' || normalized === 'medium' || normalized === 'low') {
+    return normalized
+  }
+  return null
+}
+
+function deriveImportance(item: NewsItem & { isMatch?: number }): Exclude<ImportanceLevel, 'all'> {
+  const parsed = parseAiAnalysis(item)
+  const explicitImportance = normalizeImportance(parsed.importance)
+  if (explicitImportance) return explicitImportance
+
+  const weightedHotness = item.hotness + ((item as any).isMatch === 1 ? 8 : 0) + (item.verified === 1 ? 4 : 0)
+  if (weightedHotness >= 90) return 'urgent'
+  if (weightedHotness >= 72) return 'high'
+  if (weightedHotness >= 45) return 'medium'
+  return 'low'
+}
+
+function getImportanceWeight(level: Exclude<ImportanceLevel, 'all'>): number {
+  switch (level) {
+    case 'urgent': return 4
+    case 'high': return 3
+    case 'medium': return 2
+    case 'low': return 1
+  }
+}
+
+function getPublishedTimestamp(item: NewsItem): number {
+  return new Date(item.publishedAt || item.createdAt).getTime()
+}
+
+function getDiscoveredTimestamp(item: NewsItem): number {
+  return new Date(item.createdAt).getTime()
+}
+
+function isWithinTimeRange(item: NewsItem, range: TimeRange): boolean {
+  if (range === 'all') return true
+
+  const timestamp = getDiscoveredTimestamp(item)
+  const now = Date.now()
+  const limits: Record<Exclude<TimeRange, 'all'>, number> = {
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+  }
+
+  return now - timestamp <= limits[range]
+}
+
+function getRelevanceScore(item: NewsItem & { isMatch?: number }, keywordTerm: string): number {
+  const base = ((item as any).isMatch === 1 ? 80 : 0) + (item.verified === 1 ? 12 : 0) + item.hotness * 0.25
+  const term = keywordTerm.trim().toLowerCase()
+  if (!term) return base
+
+  const parsed = parseAiAnalysis(item)
+  const fields = [item.title, item.summary, item.content, parsed.reasoning || '']
+  const weights = [50, 28, 12, 20]
+
+  return fields.reduce((score, field, index) => {
+    const normalizedField = field.toLowerCase()
+    if (!normalizedField.includes(term)) return score
+    if (index === 0 && normalizedField.startsWith(term)) return score + weights[index] + 8
+    return score + weights[index]
+  }, base)
+}
+
+function getRelationReason(item: NewsItem): string {
+  const parsed = parseAiAnalysis(item)
+  if (parsed.reasoning?.trim()) return parsed.reasoning.trim()
+  if (parsed.category?.trim()) return `关联分类：${parsed.category.trim()}`
+
+  return item.summary?.trim() || '暂无关联原因'
+}
 
 // ────────── 热度渐变条 ──────────
 function HotnessMeter({ value }: { value: number }) {
@@ -57,46 +178,61 @@ function HotnessMeter({ value }: { value: number }) {
 
 // ────────── 验证徽章 ──────────
 function VerifyBadge({ verified, confidence }: { verified: number | null; confidence: number }) {
-  if (verified === null) return null
+  if (verified === null) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-slate-700/30 text-slate-300 border border-slate-600/30">
+        ⏳ 待验证
+      </span>
+    )
+  }
   if (verified === 1) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-        ✓ 已验证{confidence > 0 && ` ${Math.round(confidence * 100)}%`}
+        ✓ 已验证{confidence > 0 && ` · 置信度 ${Math.round(confidence * 100)}%`}
       </span>
     )
   }
   return (
     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20">
-      ⚠ 可疑{confidence > 0 && ` ${Math.round(confidence * 100)}%`}
+      ⚠ 可疑{confidence > 0 && ` · 置信度 ${Math.round(confidence * 100)}%`}
     </span>
   )
 }
 
 // ────────── 新闻卡片 ──────────
-function NewsCard({ item, index }: { item: NewsItem; index: number }) {
+function NewsCard({ item, index }: { item: NewsItem & { isMatch?: number }; index: number }) {
   const [expanded, setExpanded] = useState(false)
+  const relationReason = getRelationReason(item)
+  const importanceLevel = deriveImportance(item)
 
   let warnings: string[] = []
   try { warnings = item.verifyWarnings ? JSON.parse(item.verifyWarnings) : [] } catch { /* ignore */ }
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10, scale: 0.97 }}
-      transition={{ duration: 0.3, delay: index * 0.04 }}
-      layout
-    >
-      <GlowingCard containerClassName="h-full">
-        <div className="p-4 flex flex-col h-full">
-          {/* 顶部：来源 + 时间 + 验证 */}
-          <div className="flex items-center gap-2 mb-2.5 flex-wrap">
-            <span className="text-[10px] px-2 py-0.5 rounded-md bg-gradient-to-r from-slate-800 to-slate-800/60 text-slate-400 border border-slate-700/40 font-medium">
+  const cardContent = (
+    <GlowingCard containerClassName="h-full">
+      <div className="p-4 flex flex-col h-full relative">
+        {/* 顶部：来源 + 时间 + 验证 */}
+        <div className="flex items-center gap-2 mb-2.5 flex-wrap">
+          {item.isMatch === 1 && (
+            <span className="bg-gradient-to-r from-fuchsia-600 to-pink-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg shadow-pink-500/40 animate-pulse flex-shrink-0">
+              🎯 命中
+            </span>
+          )}
+          <span className="text-[10px] px-2 py-0.5 rounded-md bg-gradient-to-r from-slate-800 to-slate-800/60 text-slate-400 border border-slate-700/40 font-medium">
               {SOURCE_CONFIG[item.source]?.icon || '🌐'} {item.source}
+            </span>
+            <span className={cn(
+              'text-[10px] px-2 py-0.5 rounded-md border font-medium',
+              importanceLevel === 'urgent' && 'border-red-500/30 bg-red-500/10 text-red-300',
+              importanceLevel === 'high' && 'border-orange-500/30 bg-orange-500/10 text-orange-300',
+              importanceLevel === 'medium' && 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+              importanceLevel === 'low' && 'border-slate-700/40 bg-slate-800/60 text-slate-400',
+            )}>
+              {IMPORTANCE_LABELS[importanceLevel]}
             </span>
             <VerifyBadge verified={item.verified} confidence={item.verifyConfidence} />
             {item.publishedAt && (
-              <span className="text-[10px] text-slate-600 ml-auto">
+              <span className="text-[10px] text-slate-600 ml-auto mr-8">
                 {new Date(item.publishedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
@@ -111,12 +247,17 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
             ) : item.title}
           </h3>
 
-          {/* 摘要 */}
-          {item.summary && (
-            <p className="text-xs text-slate-400 leading-relaxed mb-3 line-clamp-3">
-              {item.summary}
+          <div className="mb-3 rounded-xl border border-cyan-500/10 bg-cyan-500/5 px-3 py-2">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-300/80">
+                关联原因
+              </span>
+              <span className="h-px flex-1 bg-gradient-to-r from-cyan-400/30 to-transparent" />
+            </div>
+            <p className="text-xs text-slate-300/90 leading-relaxed line-clamp-3">
+              {relationReason}
             </p>
-          )}
+          </div>
 
           <div className="mt-auto space-y-2">
             {/* 热度条 */}
@@ -147,6 +288,12 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
                 className="overflow-hidden"
               >
                 <div className="border-t border-slate-800/60 pt-3 mt-3 space-y-2">
+                  {item.summary && item.summary.trim() && item.summary.trim() !== relationReason && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500 mb-1">原始摘要</p>
+                      <p className="text-xs text-slate-400 leading-relaxed">{item.summary}</p>
+                    </div>
+                  )}
                   {item.content && (
                     <p className="text-xs text-slate-500 leading-relaxed">{item.content}</p>
                   )}
@@ -165,6 +312,23 @@ function NewsCard({ item, index }: { item: NewsItem; index: number }) {
           </AnimatePresence>
         </div>
       </GlowingCard>
+  )
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10, scale: 0.97 }}
+      transition={{ duration: 0.3, delay: index * 0.04 }}
+      className="break-inside-avoid"
+    >
+      {item.isMatch === 1 || item.hotness >= 95 ? (
+        <BackgroundGradient className="rounded-[22px] overflow-hidden" containerClassName="w-full">
+          {cardContent}
+        </BackgroundGradient>
+      ) : (
+        cardContent
+      )}
     </motion.div>
   )
 }
@@ -189,12 +353,17 @@ function SkeletonCard() {
 // ────────── 主页面 ──────────
 export default function NewsPage() {
   const [news, setNews] = useState<NewsItem[]>([])
+  const [keywords, setKeywords] = useState<Keyword[]>([])
   const [stats, setStats] = useState<NewsStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [source, setSource] = useState('all')
   const [search, setSearch] = useState('')
-  const [sortMode, setSortMode] = useState<SortMode>('hotness')
+  const [selectedKeywordId, setSelectedKeywordId] = useState<string>('all')
+  const [importance, setImportance] = useState<ImportanceLevel>('all')
+  const [timeRange, setTimeRange] = useState<TimeRange>('all')
+  const [sortMode, setSortMode] = useState<AdvancedSortMode>('hotness')
   const [favorites, setFavorites] = useState<Set<number>>(() => {
     try {
       const saved = localStorage.getItem('hotpulse_favorites')
@@ -217,12 +386,22 @@ export default function NewsPage() {
     })
   }
 
+  const loadKeywords = useCallback(async () => {
+    try {
+      const result = await fetchKeywords()
+      setKeywords(result.keywords)
+    } catch {
+      console.error('Failed to load keywords')
+    }
+  }, [])
+
   // 加载数据
   const loadNews = useCallback(async () => {
     try {
       const params: Record<string, string | number> = {}
       if (source !== 'all') params.source = source
       if (search.trim()) params.keyword = search.trim()
+      if (selectedKeywordId !== 'all') params.keywordId = Number(selectedKeywordId)
       const result = await fetchNews(params)
       setNews(result.data)
     } catch {
@@ -230,7 +409,7 @@ export default function NewsPage() {
     } finally {
       setLoading(false)
     }
-  }, [source, search])
+  }, [search, selectedKeywordId, source])
 
   const loadStats = useCallback(async () => {
     try {
@@ -248,6 +427,10 @@ export default function NewsPage() {
     loadStats()
   }, [loadStats])
 
+  useEffect(() => {
+    loadKeywords()
+  }, [loadKeywords])
+
   // 手动刷新采集
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -264,25 +447,73 @@ export default function NewsPage() {
     }
   }
 
+  const selectedKeyword = useMemo(
+    () => keywords.find((item) => String(item.id) === selectedKeywordId) ?? null,
+    [keywords, selectedKeywordId]
+  )
+
+  const activeFilterCount = [
+    source !== 'all',
+    selectedKeywordId !== 'all',
+    importance !== 'all',
+    timeRange !== 'all',
+    search.trim().length > 0,
+    showFavOnly,
+  ].filter(Boolean).length
+
   // 排序 + 筛选
   const filteredNews = useMemo(() => {
     let list = [...news]
+
     if (showFavOnly) {
       list = list.filter(n => favorites.has(n.id))
     }
+
+    if (importance !== 'all') {
+      list = list.filter((item) => deriveImportance(item as NewsItem & { isMatch?: number }) === importance)
+    }
+
+    if (timeRange !== 'all') {
+      list = list.filter((item) => isWithinTimeRange(item, timeRange))
+    }
+
+    const relevanceTerm = search.trim() || selectedKeyword?.keyword || ''
+
     switch (sortMode) {
       case 'hotness':
-        list.sort((a, b) => b.hotness - a.hotness)
+        list.sort((a, b) => {
+          const aMatch = (a as any).isMatch === 1 ? 1 : 0
+          const bMatch = (b as any).isMatch === 1 ? 1 : 0
+          if (aMatch !== bMatch) return bMatch - aMatch
+          const hotnessA = a.hotness + (a.verified === 1 ? 6 : 0) + Math.max(0, 72 - (Date.now() - getDiscoveredTimestamp(a)) / (1000 * 60 * 60)) * 0.08
+          const hotnessB = b.hotness + (b.verified === 1 ? 6 : 0) + Math.max(0, 72 - (Date.now() - getDiscoveredTimestamp(b)) / (1000 * 60 * 60)) * 0.08
+          return hotnessB - hotnessA
+        })
         break
-      case 'latest':
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      case 'relevance':
+        list.sort((a, b) => {
+          return getRelevanceScore(b as NewsItem & { isMatch?: number }, relevanceTerm) - getRelevanceScore(a as NewsItem & { isMatch?: number }, relevanceTerm)
+        })
         break
-      case 'verified':
-        list.sort((a, b) => (b.verified === 1 ? 1 : 0) - (a.verified === 1 ? 1 : 0) || b.hotness - a.hotness)
+      case 'published':
+        list.sort((a, b) => {
+          return getPublishedTimestamp(b) - getPublishedTimestamp(a)
+        })
+        break
+      case 'discovered':
+        list.sort((a, b) => getDiscoveredTimestamp(b) - getDiscoveredTimestamp(a))
+        break
+      case 'importance':
+        list.sort((a, b) => {
+          const importanceDiff = getImportanceWeight(deriveImportance(b as NewsItem & { isMatch?: number })) - getImportanceWeight(deriveImportance(a as NewsItem & { isMatch?: number }))
+          if (importanceDiff !== 0) return importanceDiff
+          return b.hotness - a.hotness
+        })
         break
     }
+
     return list
-  }, [news, sortMode, showFavOnly, favorites])
+  }, [favorites, importance, keywords, news, search, selectedKeyword, showFavOnly, sortMode, timeRange])
 
   // 可用数据源列表
   const activeSources = useMemo(() => {
@@ -292,6 +523,13 @@ export default function NewsPage() {
 
   return (
     <div className="space-y-6">
+      <div className="mb-8">
+        <TextGenerateEffect
+          words="全网热点实时追踪，一手掌握最全资讯"
+          className="text-2xl md:text-3xl text-slate-200"
+        />
+      </div>
+
       {/* ── 统计 BentoGrid ── */}
       <BentoGrid>
         <BentoGridItem
@@ -320,7 +558,7 @@ export default function NewsPage() {
         />
       </BentoGrid>
 
-      {/* ── 搜索 + 排序 + 刷新 ── */}
+      {/* ── 搜索 + 刷新 ── */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         {/* 搜索框 */}
         <div className="flex-1 relative group w-full">
@@ -335,28 +573,6 @@ export default function NewsPage() {
               text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500/40
               focus:ring-1 focus:ring-cyan-500/20 transition-all"
           />
-        </div>
-
-        {/* 排序按钮组 */}
-        <div className="flex items-center gap-1 bg-slate-900/60 border border-slate-800/60 rounded-xl p-1">
-          {([
-            { key: 'hotness', label: '🔥 热度', },
-            { key: 'latest', label: '🕐 最新', },
-            { key: 'verified', label: '✓ 已验证', },
-          ] as const).map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setSortMode(key)}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all",
-                sortMode === key
-                  ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
-                  : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 border border-transparent'
-              )}
-            >
-              {label}
-            </button>
-          ))}
         </div>
 
         {/* 收藏筛选 */}
@@ -386,6 +602,106 @@ export default function NewsPage() {
             </span>
           ) : '🔄 采集热点'}
         </ShimmerButton>
+      </div>
+
+      {/* ── 高级筛选 ── */}
+      <div className="rounded-2xl border border-slate-800/50 bg-slate-900/40 p-4 backdrop-blur-sm">
+        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-200">筛选维度</p>
+            <p className="text-xs text-slate-500">按来源、重要性、监控关键词和时间范围组合过滤信息流</p>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-800/60 bg-slate-950/40 px-3 py-1 text-[11px] text-slate-400">
+            <span>当前激活 {activeFilterCount} 项筛选</span>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={() => {
+                  setSource('all')
+                  setSelectedKeywordId('all')
+                  setImportance('all')
+                  setTimeRange('all')
+                  setSearch('')
+                  setShowFavOnly(false)
+                }}
+                className="text-cyan-400 transition-colors hover:text-cyan-300"
+              >
+                清空
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">重要性</span>
+            <select
+              value={importance}
+              onChange={(event) => setImportance(event.target.value as ImportanceLevel)}
+              className="w-full rounded-xl border border-slate-800/60 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none transition-all focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20"
+            >
+              <option value="all">全部级别</option>
+              <option value="urgent">urgent / 紧急</option>
+              <option value="high">high / 高</option>
+              <option value="medium">medium / 中</option>
+              <option value="low">low / 低</option>
+            </select>
+          </label>
+
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">关键词</span>
+            <select
+              value={selectedKeywordId}
+              onChange={(event) => setSelectedKeywordId(event.target.value)}
+              className="w-full rounded-xl border border-slate-800/60 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none transition-all focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20"
+            >
+              <option value="all">全部监控关键词</option>
+              {keywords.map((keyword) => (
+                <option key={keyword.id} value={String(keyword.id)}>
+                  {keyword.keyword}{keyword.scope ? ` · ${keyword.scope}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">时间范围</span>
+            <select
+              value={timeRange}
+              onChange={(event) => setTimeRange(event.target.value as TimeRange)}
+              className="w-full rounded-xl border border-slate-800/60 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none transition-all focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20"
+            >
+              {TIME_RANGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {/* ── 排序方式 ── */}
+      <div className="rounded-2xl border border-slate-800/50 bg-slate-900/30 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-200">排序方式</p>
+            <p className="text-xs text-slate-500">支持热度综合、相关性、最新发布、最新发现和重要程度排序</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {SORT_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setSortMode(key)}
+              className={cn(
+                'rounded-full border px-3 py-2 text-xs font-medium transition-all',
+                sortMode === key
+                  ? 'border-cyan-500/30 bg-cyan-500/15 text-cyan-300 shadow-lg shadow-cyan-500/10'
+                  : 'border-slate-800/60 bg-slate-950/40 text-slate-500 hover:border-slate-700/60 hover:text-slate-300'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── 数据源筛选 ── */}
@@ -448,10 +764,32 @@ export default function NewsPage() {
           </div>
         </motion.div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="columns-1 md:columns-2 xl:columns-3 gap-4 [column-fill:_balance]">
           <AnimatePresence mode="popLayout">
             {filteredNews.map((item, index) => (
-              <div key={item.id} className="relative group">
+              <div 
+                key={item.id} 
+                className="relative group mb-4 block w-full break-inside-avoid"
+                onMouseEnter={() => setHoveredIndex(index)}
+                onMouseLeave={() => setHoveredIndex(null)}
+              >
+                <AnimatePresence>
+                  {hoveredIndex === index && (
+                    <motion.span
+                      className="absolute inset-0 w-full bg-cyan-500/[0.08] block rounded-2xl -z-10"
+                      layoutId="hoverBackground"
+                      initial={{ opacity: 0 }}
+                      animate={{
+                        opacity: 1,
+                        transition: { duration: 0.15 },
+                      }}
+                      exit={{
+                        opacity: 0,
+                        transition: { duration: 0.15, delay: 0.2 },
+                      }}
+                    />
+                  )}
+                </AnimatePresence>
                 <NewsCard item={item} index={index} />
                 {/* 收藏按钮（浮动） */}
                 <motion.button
@@ -459,7 +797,7 @@ export default function NewsPage() {
                   whileTap={{ scale: 0.85 }}
                   onClick={() => toggleFavorite(item.id)}
                   className={cn(
-                    "absolute top-3 right-3 z-20 w-7 h-7 rounded-lg flex items-center justify-center transition-all",
+                    "absolute top-5 right-5 z-20 w-7 h-7 rounded-lg flex items-center justify-center transition-all",
                     favorites.has(item.id)
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                       : 'bg-slate-800/60 text-slate-600 border border-slate-700/40 opacity-0 group-hover:opacity-100'
@@ -488,3 +826,4 @@ export default function NewsPage() {
     </div>
   )
 }
+

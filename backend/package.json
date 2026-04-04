@@ -10,11 +10,13 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
+    "fix:legacy-verification": "tsx src/scripts/fixLegacyVerificationState.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
+    "@the-convocation/twitter-scraper": "^0.22.3",
     "axios": "^1.6.0",
     "better-sqlite3": "^9.0.0",
     "cheerio": "^1.0.0-rc.12",

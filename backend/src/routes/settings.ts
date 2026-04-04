@@ -34,7 +34,7 @@ router.get('/', (_req: Request, res: Response) => {
 // PUT /api/settings - 更新设置
 router.put('/', (req: Request, res: Response) => {
   try {
-    const configPath = path.resolve(__dirname, '../../../../config/config.json')
+    const configPath = process.env.CONFIG_PATH || path.resolve(__dirname, '../../../config/config.json')
     const currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
 
     const { dataSources, ai, notifications } = req.body

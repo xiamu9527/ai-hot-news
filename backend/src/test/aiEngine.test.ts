@@ -138,27 +138,57 @@ describe('AIEngine', () => {
       mockCreate.mockRejectedValue(new Error('fail'))
 
       const result = await engine.verifyContent('test', 'test', 'Bing')
-      expect(result.verified).toBe(true) // 降级为信任
-      expect(result.confidence).toBe(0.5)
+      expect(result.verified).toBeNull()
+      expect(result.confidence).toBe(0)
+      expect(result.warnings).toContain('AI验证不可用，无法确认真实性')
     })
   })
 
   describe('summarizeNews', () => {
-    it('应返回 AI 生成的摘要', async () => {
+    it('应返回 AI 生成的翻译及中文摘要', async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { content: 'OpenAI发布了GPT-5模型，在推理能力上取得重大突破。' } }],
+        choices: [{ message: { content: '{"title":"GPT-5发布", "summary":"OpenAI发布了GPT-5模型，在推理能力上取得重大突破。"}' } }],
       })
 
-      const result = await engine.summarizeNews('OpenAI today announced GPT-5, ...(very long content)')
-      expect(result).toBe('OpenAI发布了GPT-5模型，在推理能力上取得重大突破。')
+      const result = await engine.summarizeNews('New GPT-5', 'OpenAI today announced GPT-5, ...(very long content)')
+      expect(result.title).toBe('GPT-5发布')
+      expect(result.summary).toBe('OpenAI发布了GPT-5模型，在推理能力上取得重大突破。')
     })
 
     it('AI 失败时应降级为截断文本', async () => {
       mockCreate.mockRejectedValue(new Error('fail'))
 
       const longContent = 'A'.repeat(500)
-      const result = await engine.summarizeNews(longContent)
-      expect(result).toHaveLength(200)
+      const result = await engine.summarizeNews('Tit', longContent)
+      expect(result.title).toBe('Tit')
+      expect(result.summary).toHaveLength(200)
+    })
+  })
+
+  describe('expandKeyword', () => {
+    it('应返回 AI 生成的语义拓展变体', async () => {
+      mockCreate.mockResolvedValueOnce({
+        choices: [{ message: { content: '["GPT-5", "大模型", "ChatGPT-5"]' } }],
+      })
+
+      const result = await engine.expandKeyword('GPT-5')
+      expect(result).toEqual(['GPT-5', '大模型', 'ChatGPT-5'])
+    })
+
+    it('如果原始词不在变体中，应自动补充到第一位', async () => {
+      mockCreate.mockResolvedValueOnce({
+        choices: [{ message: { content: '["大模型", "ChatGPT-5"]' } }],
+      })
+
+      const result = await engine.expandKeyword('GPT-5')
+      expect(result).toEqual(['GPT-5', '大模型', 'ChatGPT-5'])
+    })
+
+    it('AI 失败时应保底返回原始关键词', async () => {
+      mockCreate.mockRejectedValue(new Error('fail'))
+
+      const result = await engine.expandKeyword('test-fail')
+      expect(result).toEqual(['test-fail'])
     })
   })
 
@@ -167,7 +197,7 @@ describe('AIEngine', () => {
       mockCreate.mockResolvedValueOnce({
         choices: [{
           message: {
-            content: '[{"title":"AI突破","score":90,"category":"技术"},{"title":"天气预报","score":20,"category":"生活"}]',
+            content: '[{"title":"AI突破","score":90,"category":"技术","reasoning":"技术突破带来行业关注"},{"title":"天气预报","score":20,"category":"生活","reasoning":"常规信息，话题性弱"}]',
           },
         }],
       })
@@ -175,6 +205,7 @@ describe('AIEngine', () => {
       const result = await engine.analyzeTopics('综合', ['AI突破', '天气预报'])
       expect(result).toHaveLength(2)
       expect(result[0].score).toBe(90)
+      expect(result[0].reasoning).toBe('技术突破带来行业关注')
     })
 
     it('空标题列表应返回空数组', async () => {
@@ -189,6 +220,7 @@ describe('AIEngine', () => {
       const result = await engine.analyzeTopics('tech', ['Title 1', 'Title 2'])
       expect(result).toHaveLength(2)
       expect(result[0].score).toBe(30) // 默认评分
+      expect(result[0].reasoning).toBe('AI批量分析不可用，暂以默认热度展示')
     })
   })
 })

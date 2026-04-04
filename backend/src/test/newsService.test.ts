@@ -109,6 +109,17 @@ describe('newsService', () => {
     expect(matches[0].title).toBe('Match news')
   })
 
+  it('getNewsList - 支持 keywordId 过滤', () => {
+    const kw = createKeyword('OpenAI')
+    const matchedNews = upsertNews({ title: 'OpenAI 发布新模型', source: 'Bing' })
+    upsertNews({ title: '其他新闻', source: 'Bing' })
+    recordKeywordMatch(kw.id, matchedNews.id)
+
+    const result = getNewsList({ keywordId: kw.id })
+    expect(result.total).toBe(1)
+    expect(result.data[0].title).toBe('OpenAI 发布新模型')
+  })
+
   it('recordKeywordMatch - 重复匹配应忽略', () => {
     const kw = createKeyword('test-kw')
     const news = upsertNews({ title: 'Match news', source: 'Bing' })

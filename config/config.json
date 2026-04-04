@@ -10,7 +10,9 @@
   },
   "datasources": {
     "twitter": {
-      "apiKey": "new1_03876849ea754cd481a7c3e231d020ea"  
+      "enabled": true,
+      "apiKey": "new1_03876849ea754cd481a7c3e231d020ea",
+      "limit": 20
     },
     "hackerNews": {
       "enabled": true,
@@ -47,7 +49,7 @@
       "note": "Web爬虫"
     },
     "bili": {
-      "enabled": true,
+      "enabled": false,
       "searchUrl": "https://search.bilibili.com/all",
       "refreshInterval": 900000,
       "limit": 15,
@@ -87,7 +89,7 @@
       "note": "36氪科技资讯，RSS订阅"
     },
     "ithome": {
-      "enabled": true,
+      "enabled": false,
       "rssUrl": "https://www.ithome.com/rss/",
       "refreshInterval": 900000,
       "limit": 20,
