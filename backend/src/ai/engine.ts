@@ -2,6 +2,11 @@ import { OpenAI } from 'openai'
 import { getConfig, Config } from '../utils/config.js'
 import { logger } from '../utils/logger.js'
 
+type ChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
 function extractJSON(text: string): string {
   // 尝试从 markdown code block 或纯文本中提取 JSON
   const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -10,6 +15,44 @@ function extractJSON(text: string): string {
   const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
   if (jsonMatch) return jsonMatch[1]
   return text
+}
+
+function shouldFallbackToJsonMode(error: any): boolean {
+  const status = error?.status || error?.response?.status
+  const message = String(error?.message || '')
+  if (status === 400) return true
+  return /(response_format|json_schema|structured output|not supported|unsupported)/i.test(message)
+}
+
+function isQuotaExhaustedError(error: any): boolean {
+  const status = error?.status || error?.response?.status
+  const message = String(error?.message || error?.response?.data?.error?.message || '')
+  return status === 403 && /(free tier|exhausted|quota|额度|余额|insufficient)/i.test(message)
+}
+
+function ensureJsonInstruction(messages: ChatMessage[]): ChatMessage[] {
+  const hasJsonHint = messages.some((message) => /json/i.test(message.content))
+  if (hasJsonHint) return messages
+
+  return messages.map((message, index) => {
+    if (index !== 0) return message
+    return {
+      ...message,
+      content: `${message.content}\n请严格返回 JSON 对象（json），不要输出额外说明。`,
+    }
+  })
+}
+
+function prefersJsonObjectMode(config: Config): boolean {
+  const provider = String(config.ai.provider || '').toLowerCase()
+  const apiUrl = String(config.ai.apiUrl || '').toLowerCase()
+  return provider === 'bailian' || provider === 'dashscope' || apiUrl.includes('dashscope.aliyuncs.com')
+}
+
+function prefersTextJsonFallback(config: Config): boolean {
+  const provider = String(config.ai.provider || '').toLowerCase()
+  const apiUrl = String(config.ai.apiUrl || '').toLowerCase()
+  return provider === 'lmstudio' || apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1')
 }
 
 // ============================================================
@@ -83,6 +126,78 @@ export class AIEngine {
     return `${prefix}:${parts.map(p => p.slice(0, 128)).join('|')}`
   }
 
+  private normalizeImportanceLevel(raw?: string): 'urgent' | 'high' | 'medium' | 'low' {
+    const value = raw?.trim().toLowerCase()
+    if (value === 'urgent' || value === 'high' || value === 'medium' || value === 'low') {
+      return value
+    }
+    return 'medium'
+  }
+
+  private async createStructuredCompletion<T>(options: {
+    schemaName: string
+    schema: Record<string, unknown>
+    messages: ChatMessage[]
+    maxTokens: number
+    temperature: number
+    fallback: T
+  }): Promise<T> {
+    const useJsonObjectFirst = prefersJsonObjectMode(this.config)
+    const useTextJsonFallback = prefersTextJsonFallback(this.config)
+    const requestBase = {
+      model: this.config.ai.model,
+      temperature: options.temperature,
+      max_tokens: options.maxTokens,
+      messages: useJsonObjectFirst ? ensureJsonInstruction(options.messages) : options.messages,
+    }
+
+    if (useJsonObjectFirst) {
+      const jsonResponse = await this.client.chat.completions.create({
+        ...requestBase,
+        response_format: { type: 'json_object' },
+      } as any)
+
+      const raw = jsonResponse.choices[0].message.content || JSON.stringify(options.fallback)
+      return JSON.parse(extractJSON(raw)) as T
+    }
+
+    try {
+      const structuredResponse = await this.client.chat.completions.create({
+        ...requestBase,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: options.schemaName,
+            strict: true,
+            schema: options.schema,
+          },
+        },
+      } as any)
+
+      const raw = structuredResponse.choices[0].message.content || JSON.stringify(options.fallback)
+      return JSON.parse(extractJSON(raw)) as T
+    } catch (error) {
+      if (!shouldFallbackToJsonMode(error)) throw error
+
+      logger.warn(`Structured output unavailable for ${options.schemaName}, falling back to ${useTextJsonFallback ? 'text JSON' : 'JSON object'} mode`)
+      const fallbackResponse = await this.client.chat.completions.create(
+        useTextJsonFallback
+          ? {
+              ...requestBase,
+              messages: ensureJsonInstruction(options.messages),
+            } as any
+          : {
+              ...requestBase,
+              messages: ensureJsonInstruction(options.messages),
+              response_format: { type: 'json_object' },
+            } as any
+      )
+
+      const raw = fallbackResponse.choices[0].message.content || JSON.stringify(options.fallback)
+      return JSON.parse(extractJSON(raw)) as T
+    }
+  }
+
   /**
    * 检测热点新闻 - 使用AI分析文章是否是真实的热点内容
    */
@@ -97,10 +212,25 @@ export class AIEngine {
 
     try {
       const result = await withRetry(async () => {
-        const response = await this.client.chat.completions.create({
-          model: this.config.ai.model,
+        const parsed = await this.createStructuredCompletion<{
+          isHotness: boolean
+          score: number
+          reasoning: string
+        }>({
+          schemaName: 'hotness_analysis',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['isHotness', 'score', 'reasoning'],
+            properties: {
+              isHotness: { type: 'boolean' },
+              score: { type: 'number' },
+              reasoning: { type: 'string' },
+            },
+          },
           temperature: this.config.ai.temperature,
-          max_tokens: this.config.ai.maxTokens,
+          maxTokens: this.config.ai.maxTokens,
+          fallback: { isHotness: false, score: 0, reasoning: '' },
           messages: [
             {
               role: 'system',
@@ -114,9 +244,6 @@ export class AIEngine {
             },
           ],
         })
-
-        const raw = response.choices[0].message.content || '{}'
-        const parsed = JSON.parse(extractJSON(raw))
         return {
           isHotness: !!parsed.isHotness,
           score: Math.min(100, Math.max(0, Number(parsed.score) || 0)),
@@ -146,10 +273,25 @@ export class AIEngine {
 
     try {
       const result = await withRetry(async () => {
-        const response = await this.client.chat.completions.create({
-          model: this.config.ai.model,
+        const parsed = await this.createStructuredCompletion<{
+          verified: boolean
+          confidence: number
+          warnings: string[]
+        }>({
+          schemaName: 'content_verification',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['verified', 'confidence', 'warnings'],
+            properties: {
+              verified: { type: 'boolean' },
+              confidence: { type: 'number' },
+              warnings: { type: 'array', items: { type: 'string' } },
+            },
+          },
           temperature: 0.3,
-          max_tokens: this.config.ai.maxTokens,
+          maxTokens: this.config.ai.maxTokens,
+          fallback: { verified: false, confidence: 0, warnings: [] },
           messages: [
             {
               role: 'system',
@@ -163,9 +305,6 @@ export class AIEngine {
             },
           ],
         })
-
-        const raw = response.choices[0].message.content || '{}'
-        const parsed = JSON.parse(extractJSON(raw))
         return {
           verified: !!parsed.verified,
           confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5)),
@@ -193,10 +332,20 @@ export class AIEngine {
 
     try {
       const result = await withRetry(async () => {
-        const response = await this.client.chat.completions.create({
-          model: this.config.ai.model,
+        const parsed = await this.createStructuredCompletion<{ title: string; summary: string }>({
+          schemaName: 'news_summary_translation',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['title', 'summary'],
+            properties: {
+              title: { type: 'string' },
+              summary: { type: 'string' },
+            },
+          },
           temperature: 0.5,
-          max_tokens: 250,
+          maxTokens: 250,
+          fallback: { title, summary: content.slice(0, 200) },
           messages: [
             {
               role: 'system',
@@ -208,10 +357,7 @@ export class AIEngine {
             },
           ],
         })
-        
-        const raw = response.choices[0].message.content || '{}'
-        const parsed = JSON.parse(extractJSON(raw))
-        
+
         return {
           title: parsed.title || title,
           summary: parsed.summary || content.slice(0, 200)
@@ -237,10 +383,15 @@ export class AIEngine {
 
     try {
       const result = await withRetry(async () => {
-        const response = await this.client.chat.completions.create({
-          model: this.config.ai.model,
+        const parsed = await this.createStructuredCompletion<string[]>({
+          schemaName: 'keyword_expansion',
+          schema: {
+            type: 'array',
+            items: { type: 'string' },
+          },
           temperature: 0.6,
-          max_tokens: 150,
+          maxTokens: 150,
+          fallback: [keyword],
           messages: [
             {
               role: 'system',
@@ -252,15 +403,7 @@ export class AIEngine {
             },
           ],
         })
-        
-        const raw = response.choices[0].message.content || '[]'
-        let parsed: string[] = []
-        try {
-          parsed = JSON.parse(extractJSON(raw))
-        } catch (e) {
-          parsed = [keyword]
-        }
-        
+
         // 确保原始关键词也在里面
         if (!parsed.includes(keyword)) {
           parsed.unshift(keyword)
@@ -289,10 +432,30 @@ export class AIEngine {
     if (titles.length === 0) return []
     try {
       return await withRetry(async () => {
-        const response = await this.client.chat.completions.create({
-          model: this.config.ai.model,
+        const parsed = await this.createStructuredCompletion<Array<{
+          title: string
+          score: number
+          category: string
+          reasoning: string
+        }>>({
+          schemaName: 'topic_analysis',
+          schema: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['title', 'score', 'category', 'reasoning'],
+              properties: {
+                title: { type: 'string' },
+                score: { type: 'number' },
+                category: { type: 'string' },
+                reasoning: { type: 'string' },
+              },
+            },
+          },
           temperature: 0.5,
-          max_tokens: 1000,
+          maxTokens: 1000,
+          fallback: [],
           messages: [
             {
               role: 'system',
@@ -305,9 +468,6 @@ export class AIEngine {
             },
           ],
         })
-
-        const raw = response.choices[0].message.content || '[]'
-        const parsed = JSON.parse(extractJSON(raw))
         return Array.isArray(parsed)
           ? parsed.map((item) => ({
               title: String(item?.title || ''),
@@ -325,6 +485,223 @@ export class AIEngine {
         category: domain,
         reasoning: 'AI批量分析不可用，暂以默认热度展示'
       }))
+    }
+  }
+
+  async analyzeNewsBatch(
+    domain: string,
+    items: Array<{
+      id: string
+      title: string
+      source: string
+      summary: string
+      publishedAt?: string | null
+    }>
+  ): Promise<Array<{
+    id: string
+    score: number
+    category: string
+    reasoning: string
+    importance: 'urgent' | 'high' | 'medium' | 'low'
+    isHotness: boolean
+    riskFlag: boolean
+  }>> {
+    if (items.length === 0) return []
+
+    try {
+      return await withRetry(async () => {
+        const parsed = await this.createStructuredCompletion<Array<{
+          id: string
+          score: number
+          category: string
+          reasoning: string
+          importance: string
+          isHotness: boolean
+          riskFlag: boolean
+        }>>({
+          schemaName: 'news_batch_analysis',
+          schema: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['id', 'score', 'category', 'reasoning', 'importance', 'isHotness', 'riskFlag'],
+              properties: {
+                id: { type: 'string' },
+                score: { type: 'number' },
+                category: { type: 'string' },
+                reasoning: { type: 'string' },
+                importance: { type: 'string', enum: ['urgent', 'high', 'medium', 'low'] },
+                isHotness: { type: 'boolean' },
+                riskFlag: { type: 'boolean' },
+              },
+            },
+          },
+          temperature: 0.3,
+          maxTokens: 1400,
+          fallback: [],
+          messages: [
+            {
+              role: 'system',
+              content: `你是"${domain}"领域的热点分析师。你会收到一组新闻压缩摘要，请对每条内容独立判断，不要相互覆盖。
+输出必须是 JSON 数组，每个对象严格包含这些字段：
+{"id":"输入中的id","score":0-100,"category":"分类","reasoning":"一句话理由","importance":"urgent|high|medium|low","isHotness":true,"riskFlag":false}
+要求：
+1. id 必须和输入一致。
+2. score 表示热点强度。
+3. importance 表示处置优先级。
+4. riskFlag 用于标记疑似营销、陈旧旧闻、标题党、低信息量内容。`,
+            },
+            {
+              role: 'user',
+              content: items.map((item) => {
+                const publishedAt = item.publishedAt ? `发布时间: ${item.publishedAt}` : '发布时间: 未知'
+                return [
+                  `id: ${item.id}`,
+                  `标题: ${item.title}`,
+                  `来源: ${item.source}`,
+                  publishedAt,
+                  `摘要: ${item.summary}`,
+                ].join('\n')
+              }).join('\n\n---\n\n'),
+            },
+          ],
+        })
+
+        return Array.isArray(parsed)
+          ? parsed
+              .map((item) => ({
+                id: String(item?.id || ''),
+                score: Math.min(100, Math.max(0, Number(item?.score) || 0)),
+                category: String(item?.category || domain),
+                reasoning: String(item?.reasoning || ''),
+                importance: this.normalizeImportanceLevel(String(item?.importance || 'medium')),
+                isHotness: Boolean(item?.isHotness),
+                riskFlag: Boolean(item?.riskFlag),
+              }))
+              .filter((item) => item.id)
+          : []
+      })
+    } catch (error) {
+      logger.error('Error analyzing news batch:', error)
+      return items.map((item) => ({
+        id: item.id,
+        score: 30,
+        category: domain,
+        reasoning: 'AI批量分析不可用，暂以默认热度展示',
+        importance: 'medium',
+        isHotness: false,
+        riskFlag: false,
+      }))
+    }
+  }
+
+  async generateNewsReport(
+    mode: 'matched' | 'hotspots',
+    items: Array<{
+      id: number
+      title: string
+      source: string
+      summary: string
+      hotness: number
+      aiAnalysis?: string
+    }>
+  ): Promise<{
+    headline: string
+    summary: string
+    keyFindings: string[]
+    riskAlerts: string[]
+    recommendedActions: string[]
+    stockMarketImpact: string[]
+  }> {
+    if (items.length === 0) {
+      return {
+        headline: mode === 'matched' ? '暂无命中分析' : '暂无热点探索报告',
+        summary: '当前没有足够的新闻数据生成综合报告。',
+        keyFindings: [],
+        riskAlerts: [],
+        recommendedActions: [],
+        stockMarketImpact: [],
+      }
+    }
+
+    try {
+      logger.info(`Generating news report via provider=${this.config.ai.provider}, model=${this.config.ai.model}, baseURL=${this.config.ai.apiUrl}, items=${items.length}`)
+      const parsed = await withRetry(async () => {
+        return await this.createStructuredCompletion<{
+          headline: string
+          summary: string
+          keyFindings: string[]
+          riskAlerts: string[]
+          recommendedActions: string[]
+          stockMarketImpact: string[]
+        }>({
+          schemaName: 'news_report',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['headline', 'summary', 'keyFindings', 'riskAlerts', 'recommendedActions', 'stockMarketImpact'],
+            properties: {
+              headline: { type: 'string' },
+              summary: { type: 'string' },
+              keyFindings: { type: 'array', items: { type: 'string' } },
+              riskAlerts: { type: 'array', items: { type: 'string' } },
+              recommendedActions: { type: 'array', items: { type: 'string' } },
+              stockMarketImpact: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          temperature: 0.4,
+          maxTokens: 1200,
+          fallback: {
+            headline: mode === 'matched' ? '命中分析综合报告' : '热点探索综合报告',
+            summary: 'AI 综合报告暂不可用。',
+            keyFindings: [],
+            riskAlerts: [],
+            recommendedActions: [],
+            stockMarketImpact: [],
+          },
+          messages: [
+            {
+              role: 'system',
+              content: mode === 'matched'
+                ? '你是情报分析师，请针对关键词命中的新闻生成综合报告。重点提炼命中主题、共同趋势、潜在风险、下一步动作建议，以及对股市可能产生的影响（包括可能受影响的行业板块、个股方向、市场情绪变化等）。'
+                : '你是热点情报分析师，请针对多来源热点生成综合报告。重点提炼全网趋势、跨源共振、风险点、下一步观察建议，以及对股市可能产生的影响（包括可能受影响的行业板块、个股方向、市场情绪变化等）。',
+            },
+            {
+              role: 'user',
+              content: items.slice(0, 10).map((item, index) => [
+                `${index + 1}. 标题: ${item.title}`,
+                `来源: ${item.source}`,
+                `热度: ${item.hotness}`,
+                `摘要: ${item.summary}`,
+                `AI解析: ${item.aiAnalysis || '无'}`,
+              ].join('\n')).join('\n\n---\n\n'),
+            },
+          ],
+        })
+      })
+
+      return {
+        headline: parsed.headline,
+        summary: parsed.summary,
+        keyFindings: Array.isArray(parsed.keyFindings) ? parsed.keyFindings : [],
+        riskAlerts: Array.isArray(parsed.riskAlerts) ? parsed.riskAlerts : [],
+        recommendedActions: Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [],
+        stockMarketImpact: Array.isArray(parsed.stockMarketImpact) ? parsed.stockMarketImpact : [],
+      }
+    } catch (error) {
+      logger.error('Error generating news report:', error)
+      const quotaExhausted = isQuotaExhaustedError(error)
+      return {
+        headline: mode === 'matched' ? '命中分析综合报告' : '热点探索综合报告',
+        summary: quotaExhausted
+          ? 'AI 额度已用尽，当前先展示基础结果。请补充模型额度后再生成综合报告。'
+          : 'AI 综合报告暂不可用。',
+        keyFindings: [],
+        riskAlerts: [],
+        recommendedActions: [],
+        stockMarketImpact: [],
+      }
     }
   }
 }

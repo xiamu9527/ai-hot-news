@@ -120,6 +120,21 @@ describe('newsService', () => {
     expect(result.data[0].title).toBe('OpenAI 发布新模型')
   })
 
+  it('getNewsList - 支持 matchMode 过滤', () => {
+    const kw = createKeyword('热点词')
+    const matchedNews = upsertNews({ title: '命中新闻', source: 'Bing' })
+    upsertNews({ title: '普通新闻', source: 'Google' })
+    recordKeywordMatch(kw.id, matchedNews.id)
+
+    const matchedResult = getNewsList({ matchMode: 'matched' })
+    const unmatchedResult = getNewsList({ matchMode: 'unmatched' })
+
+    expect(matchedResult.total).toBe(1)
+    expect(matchedResult.data[0].title).toBe('命中新闻')
+    expect(unmatchedResult.total).toBe(1)
+    expect(unmatchedResult.data[0].title).toBe('普通新闻')
+  })
+
   it('recordKeywordMatch - 重复匹配应忽略', () => {
     const kw = createKeyword('test-kw')
     const news = upsertNews({ title: 'Match news', source: 'Bing' })

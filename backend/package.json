@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
+    "test:ai": "tsx src/scripts/testAiConnection.ts",
     "fix:legacy-verification": "tsx src/scripts/fixLegacyVerificationState.ts",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -11,6 +11,13 @@ const router = Router()
 router.get('/', (_req: Request, res: Response) => {
   try {
     const config = getConfig()
+    const configPath = process.env.CONFIG_PATH || path.resolve(__dirname, '../../../config/config.json')
+    const persistedConfig = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      : {}
+    const persistedAi = persistedConfig.ai || {}
+    const persistedLmStudio = persistedAi.lmStudio || {}
+
     res.json({
       dataSources: Object.fromEntries(
         Object.entries(config.datasources).map(([key, val]: [string, any]) => [
@@ -19,12 +26,25 @@ router.get('/', (_req: Request, res: Response) => {
         ])
       ),
       ai: {
-        provider: config.ai.provider,
-        model: config.ai.model,
-        hasApiKey: !!config.ai.apiKey,
-        apiUrl: config.ai.apiUrl,
+        provider: persistedAi.provider || config.ai.provider,
+        model: persistedAi.model || config.ai.model,
+        hasApiKey: !!persistedAi.apiKey,
+        apiUrl: persistedAi.apiUrl || config.ai.apiUrl,
+        lmStudio: {
+          enabled: persistedLmStudio.enabled ?? config.ai.lmStudio.enabled,
+          apiUrl: persistedLmStudio.apiUrl || config.ai.lmStudio.apiUrl,
+          model: persistedLmStudio.model || config.ai.lmStudio.model,
+          hasApiKey: !!persistedLmStudio.apiKey,
+        },
+        effective: {
+          provider: config.ai.provider,
+          model: config.ai.model,
+          apiUrl: config.ai.apiUrl,
+          mode: config.ai.lmStudio.enabled ? 'lmstudio' : 'cloud',
+        },
       },
       notifications: config.notifications,
+      scheduler: config.scheduler || { enabled: false, intervalHours: 6 },
     })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
@@ -55,11 +75,26 @@ router.put('/', (req: Request, res: Response) => {
       if (ai.apiUrl) currentConfig.ai.apiUrl = ai.apiUrl
       if (ai.model) currentConfig.ai.model = ai.model
       if (ai.provider) currentConfig.ai.provider = ai.provider
+      if (ai.lmStudio) {
+        if (!currentConfig.ai.lmStudio) currentConfig.ai.lmStudio = {}
+        if (ai.lmStudio.enabled !== undefined) currentConfig.ai.lmStudio.enabled = ai.lmStudio.enabled
+        if (ai.lmStudio.apiUrl) currentConfig.ai.lmStudio.apiUrl = ai.lmStudio.apiUrl
+        if (ai.lmStudio.apiKey) currentConfig.ai.lmStudio.apiKey = ai.lmStudio.apiKey
+        if (ai.lmStudio.model) currentConfig.ai.lmStudio.model = ai.lmStudio.model
+      }
     }
 
     // 更新通知配置
     if (notifications) {
       currentConfig.notifications = { ...currentConfig.notifications, ...notifications }
+    }
+
+    // 更新调度器配置
+    const { scheduler } = req.body
+    if (scheduler) {
+      if (!currentConfig.scheduler) currentConfig.scheduler = {}
+      if (scheduler.enabled !== undefined) currentConfig.scheduler.enabled = scheduler.enabled
+      if (scheduler.intervalHours !== undefined) currentConfig.scheduler.intervalHours = scheduler.intervalHours
     }
 
     fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2), 'utf-8')

@@ -43,7 +43,7 @@ app.use(express.json())
 // 速率限制
 const limiter = rateLimit({
   windowMs: config.security?.rateLimit?.windowMs || 900000,
-  max: config.security?.rateLimit?.maxRequests || 100,
+  max: config.security?.rateLimit?.maxRequests || 600,
   message: 'Too many requests from this IP, please try again later.',
 })
 app.use('/api/', limiter)

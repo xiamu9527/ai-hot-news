@@ -240,6 +240,53 @@ export class Crawler {
       ))
     }
 
+    // ---- 从 newsnow 移植的新数据源 ----
+    if (this.config.datasources.douyin?.enabled) {
+      taskFactories.push(() => this.fetchDouyinHot())
+    }
+    if (this.config.datasources.thepaper?.enabled) {
+      taskFactories.push(() => this.fetchThepaperHot())
+    }
+    if (this.config.datasources.juejin?.enabled) {
+      taskFactories.push(() => this.fetchJuejinHot())
+    }
+    if (this.config.datasources.sspai?.enabled) {
+      taskFactories.push(() => this.fetchSspaiHot())
+    }
+    if (this.config.datasources.v2ex?.enabled) {
+      taskFactories.push(() => this.fetchV2exHot())
+    }
+    if (this.config.datasources.douban?.enabled) {
+      taskFactories.push(() => this.fetchDoubanHot())
+    }
+    if (this.config.datasources.tieba?.enabled) {
+      taskFactories.push(() => this.fetchTiebaHot())
+    }
+    if (this.config.datasources.hupu?.enabled) {
+      taskFactories.push(() => this.fetchHupuHot())
+    }
+    if (this.config.datasources.ifeng?.enabled) {
+      taskFactories.push(() => this.fetchIfengHot())
+    }
+    if (this.config.datasources.github?.enabled) {
+      taskFactories.push(() => this.fetchGithubTrending())
+    }
+    if (this.config.datasources.solidot?.enabled) {
+      taskFactories.push(() => this.fetchSolidotHot())
+    }
+    if (this.config.datasources.wallstreetcn?.enabled) {
+      taskFactories.push(() => this.fetchWallstreetcnHot())
+    }
+    if (this.config.datasources.linuxdo?.enabled) {
+      taskFactories.push(() => this.fetchLinuxdoHot())
+    }
+    if (this.config.datasources.freebuf?.enabled) {
+      taskFactories.push(() => this.fetchFreebufHot())
+    }
+    if (this.config.datasources.nowcoder?.enabled) {
+      taskFactories.push(() => this.fetchNowcoderHot())
+    }
+
     return this.runNewsTasks(taskFactories)
   }
 
@@ -1332,7 +1379,7 @@ export class Crawler {
   }
 
   /**
-   * 百度热搜榜（爬取页面，兼容 CSS Modules hash 变更）
+   * 百度热搜榜（从页面内嵌 JSON 提取，移植自 newsnow）
    */
   async fetchBaiduHot(): Promise<NewsItem[]> {
     logger.info('Fetching Baidu hot search')
@@ -1343,29 +1390,53 @@ export class Crawler {
         timeout: 15000,
       })
 
-      const $ = cheerio.load(response.data)
+      const html = typeof response.data === 'string' ? response.data : ''
       const items: NewsItem[] = []
 
-      // 查找包含热搜标题的容器（CSS Modules 使用哈希后缀，用属性前缀匹配）
-      // 结构: category-wrap_xxx > content_xxx > a > title_xxx
-      $('[class*="content_"] a[href]').each((_, el) => {
-        const titleEl = $(el).find('[class*="title_"]').first()
-        const title = titleEl.text().trim() || $(el).text().trim()
-        const url = $(el).attr('href') || ''
-        const hotEl = $(el).closest('[class*="item_"], [class*="wrap_"]').find('[class*="hot_"]').first()
-        const hotValue = hotEl.text().trim()
-
-        if (title && title.length > 2 && url) {
-          items.push({
-            title,
-            url: url.startsWith('http') ? url : `https://www.baidu.com/s?wd=${encodeURIComponent(title)}`,
-            content: hotValue ? `热搜指数: ${hotValue}` : title,
-            source: '百度热搜',
-          })
+      // 优先从内嵌 JSON 提取（newsnow 方式，更稳定）
+      const jsonMatch = html.match(/<!--s-data:(.*?)-->/s)
+      if (jsonMatch?.[1]) {
+        try {
+          const data = JSON.parse(jsonMatch[1])
+          const cards = data?.data?.cards || []
+          for (const card of cards) {
+            const content = card.content || []
+            for (const item of content) {
+              if (item.isTop) continue
+              if (item.word) {
+                items.push({
+                  title: item.word,
+                  url: item.rawUrl || `https://www.baidu.com/s?wd=${encodeURIComponent(item.word)}`,
+                  content: item.desc || item.word,
+                  source: '百度热搜',
+                })
+              }
+            }
+          }
+        } catch (_) {
+          // JSON 解析失败，走 HTML 解析
         }
-      })
+      }
 
-      // 去重（同一个标题可能出现多次）
+      // 回退：HTML 解析
+      if (items.length === 0) {
+        const $ = cheerio.load(html)
+        $('[class*="content_"] a[href]').each((_, el) => {
+          const titleEl = $(el).find('[class*="title_"]').first()
+          const title = titleEl.text().trim() || $(el).text().trim()
+          const url = $(el).attr('href') || ''
+          if (title && title.length > 2 && url) {
+            items.push({
+              title,
+              url: url.startsWith('http') ? url : `https://www.baidu.com/s?wd=${encodeURIComponent(title)}`,
+              content: title,
+              source: '百度热搜',
+            })
+          }
+        })
+      }
+
+      // 去重
       const seen = new Set<string>()
       const deduped = items.filter(i => {
         if (seen.has(i.title)) return false
@@ -1386,71 +1457,40 @@ export class Crawler {
   // ============================================================
 
   /**
-   * 从知乎获取热门内容（热榜页面 HTML，无需登录）
+   * 从知乎获取热门内容（API 接口，移植自 newsnow）
    * 关键词搜索时过滤标题匹配项
    */
   async fetchFromZhihu(keyword?: string): Promise<NewsItem[]> {
     logger.info(`Fetching from Zhihu${keyword ? ` (kw: ${keyword})` : ' hot'}`)
     try {
-      // 知乎热榜，无需登录
-      const response = await this.client.get('https://www.zhihu.com/billboard', {
+      // 使用知乎热榜 API（无需登录）
+      const response = await this.client.get('https://www.zhihu.com/api/v3/feed/topstory/hot-list-web', {
+        params: { limit: 20, desktop: true },
         headers: {
-          'Accept': 'text/html',
+          'Accept': 'application/json',
           'Referer': 'https://www.zhihu.com/',
         },
         timeout: 15000,
       })
 
-      const $ = cheerio.load(response.data)
-      const items: NewsItem[] = []
+      const data = response.data?.data || []
+      let items: NewsItem[] = data.map((k: any) => ({
+        title: k.target?.title_area?.text || '',
+        url: k.target?.link?.url || '',
+        content: k.target?.excerpt_area?.text || '',
+        source: '知乎',
+      })).filter((i: NewsItem) => i.title)
 
-      // 从 SSR JSON 数据中提取热榜（知乎内嵌在 script 标签中的 __NEXT_DATA__）
-      const nextDataScript = $('#__NEXT_DATA__').text() || $('script#__NEXT_DATA__').text()
-      if (nextDataScript) {
-        try {
-          const nextData = JSON.parse(nextDataScript)
-          const hotList: any[] = nextData?.props?.pageProps?.hotList || []
-          const kw = keyword?.toLowerCase()
-
-          for (const item of hotList) {
-            const title = item.target?.title || item.title || ''
-            const qid = item.target?.id || item.id || ''
-            const excerpt = item.target?.excerpt || item.excerpt || ''
-
-            if (!title) continue
-            if (kw && !title.toLowerCase().includes(kw) && !excerpt.toLowerCase().includes(kw)) continue
-
-            items.push({
-              title,
-              url: qid ? `https://www.zhihu.com/question/${qid}` : 'https://www.zhihu.com/billboard',
-              content: excerpt || title,
-              source: '知乎',
-            })
-          }
-        } catch (_) {
-          // JSON 解析失败，走 HTML 解析
-        }
+      if (keyword) {
+        const kw = keyword.toLowerCase()
+        items = items.filter((i: NewsItem) =>
+          i.title.toLowerCase().includes(kw) ||
+          (i.content && i.content.toLowerCase().includes(kw))
+        )
       }
 
-      // HTML 备用选择器
-      if (items.length === 0) {
-        const kw = keyword?.toLowerCase()
-        $('div[class*="HotItem"], div.HotItem').each((_, el) => {
-          const title = $(el).find('h2, [class*="title"], .ContentItem-title').first().text().trim()
-          const link = $(el).find('a').first().attr('href') || ''
-          if (title) {
-            if (kw && !title.toLowerCase().includes(kw)) return
-            items.push({
-              title,
-              url: link.startsWith('http') ? link : `https://www.zhihu.com${link}`,
-              content: title,
-              source: '知乎',
-            })
-          }
-        })
-      }
-
-      return items.slice(0, this.config.datasources.zhihu?.limit || 15)
+      const limit = this.config.datasources.zhihu?.limit || 15
+      return items.slice(0, limit)
     } catch (error) {
       logger.error('Error fetching from Zhihu:', error)
       return []
@@ -1573,6 +1613,509 @@ export class Crawler {
       return items.slice(0, 20)
     } catch (error) {
       logger.error(`Error fetching RSS from ${sourceName}:`, error)
+      return []
+    }
+  }
+
+  // ============================================================
+  //  以下为从 newsnow 移植的新数据源
+  // ============================================================
+
+  /**
+   * 抖音热搜（移植自 newsnow）
+   */
+  async fetchDouyinHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Douyin hot search')
+    try {
+      const url = 'https://www.douyin.com/aweme/v1/web/hot/search/list/?device_platform=webapp&aid=6383&channel=channel_pc_web&detail_list=1'
+      const response = await this.client.get(url, {
+        timeout: 15000,
+      })
+
+      const wordList = response.data?.data?.word_list || []
+      const limit = this.config.datasources.douyin?.limit || 20
+
+      return wordList.slice(0, limit).map((k: any) => ({
+        title: k.word || '',
+        url: `https://www.douyin.com/hot/${k.sentence_id || ''}`,
+        content: k.word || '',
+        source: '抖音',
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Douyin hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 澎湃新闻热榜（移植自 newsnow）
+   */
+  async fetchThepaperHot(): Promise<NewsItem[]> {
+    logger.info('Fetching The Paper hot news')
+    try {
+      const response = await this.client.get('https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar', {
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const hotNews = response.data?.data?.hotNews || []
+      const limit = this.config.datasources.thepaper?.limit || 20
+
+      return hotNews.slice(0, limit).map((k: any) => ({
+        title: k.name || '',
+        url: `https://www.thepaper.cn/newsDetail_forward_${k.contId}`,
+        content: k.name || '',
+        source: '澎湃新闻',
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching The Paper hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 掘金热榜（移植自 newsnow）
+   */
+  async fetchJuejinHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Juejin hot articles')
+    try {
+      const response = await this.client.get('https://api.juejin.cn/content_api/v1/content/article_rank', {
+        params: { category_id: 1, type: 'hot', spider: 0 },
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const data = response.data?.data || []
+      const limit = this.config.datasources.juejin?.limit || 20
+
+      return data.slice(0, limit).map((k: any) => ({
+        title: k.content?.title || '',
+        url: `https://juejin.cn/post/${k.content?.content_id || ''}`,
+        content: k.content?.title || '',
+        source: '掘金',
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Juejin hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 少数派热门文章（移植自 newsnow）
+   */
+  async fetchSspaiHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Sspai hot articles')
+    try {
+      const timestamp = Date.now()
+      const response = await this.client.get('https://sspai.com/api/v1/article/tag/page/get', {
+        params: {
+          limit: 30,
+          offset: 0,
+          created_at: timestamp,
+          tag: '热门文章',
+          released: false,
+        },
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const data = response.data?.data || []
+      const limit = this.config.datasources.sspai?.limit || 20
+
+      return data.slice(0, limit).map((k: any) => ({
+        title: k.title || '',
+        url: `https://sspai.com/post/${k.id}`,
+        content: k.title || '',
+        source: '少数派',
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Sspai hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * V2EX 最新分享（移植自 newsnow）
+   */
+  async fetchV2exHot(): Promise<NewsItem[]> {
+    logger.info('Fetching V2EX latest')
+    try {
+      const feeds = ['create', 'ideas', 'programmer', 'share']
+      const results: NewsItem[] = []
+
+      const settled = await Promise.allSettled(
+        feeds.map(k =>
+          this.client.get(`https://www.v2ex.com/feed/${k}.json`, {
+            headers: { 'Accept': 'application/json' },
+            timeout: 15000,
+          })
+        )
+      )
+
+      for (const r of settled) {
+        if (r.status === 'fulfilled') {
+          const items = r.value.data?.items || []
+          for (const item of items) {
+            if (item.title && item.url) {
+              results.push({
+                title: item.title,
+                url: item.url,
+                content: item.title,
+                source: 'V2EX',
+                publishedAt: item.date_modified || item.date_published || undefined,
+              })
+            }
+          }
+        }
+      }
+
+      const limit = this.config.datasources.v2ex?.limit || 20
+      return results.slice(0, limit)
+    } catch (error) {
+      logger.error('Error fetching V2EX:', error)
+      return []
+    }
+  }
+
+  /**
+   * 豆瓣热门电影（移植自 newsnow）
+   */
+  async fetchDoubanHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Douban hot movies')
+    try {
+      const response = await this.client.get('https://m.douban.com/rexxar/api/v2/subject/recent_hot/movie', {
+        headers: {
+          'Referer': 'https://movie.douban.com/',
+          'Accept': 'application/json, text/plain, */*',
+        },
+        timeout: 15000,
+      })
+
+      const items = response.data?.items || []
+      const limit = this.config.datasources.douban?.limit || 20
+
+      return items.slice(0, limit).map((movie: any) => ({
+        title: movie.title || '',
+        url: `https://movie.douban.com/subject/${movie.id}`,
+        content: movie.card_subtitle || movie.title || '',
+        source: '豆瓣',
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Douban hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 百度贴吧热议（移植自 newsnow）
+   */
+  async fetchTiebaHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Tieba hot topics')
+    try {
+      const response = await this.client.get('https://tieba.baidu.com/hottopic/browse/topicList', {
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const topicList = response.data?.data?.bang_topic?.topic_list || []
+      const limit = this.config.datasources.tieba?.limit || 20
+
+      return topicList.slice(0, limit).map((k: any) => ({
+        title: k.topic_name || '',
+        url: k.topic_url || '',
+        content: k.topic_name || '',
+        source: '贴吧',
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Tieba hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 虎扑热帖（移植自 newsnow）
+   */
+  async fetchHupuHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Hupu hot posts')
+    try {
+      const html = await this.client.get('https://bbs.hupu.com/topic-daily-hot', {
+        headers: { 'Accept': 'text/html' },
+        timeout: 15000,
+      }).then(r => typeof r.data === 'string' ? r.data : '')
+
+      const items: NewsItem[] = []
+      const regex = /<li class="bbs-sl-web-post-body">[\s\S]*?<a href="(\/[^"]+?\.html)"[^>]*?class="p-title"[^>]*>([^<]+)<\/a>/g
+      let match: RegExpExecArray | null
+      while ((match = regex.exec(html)) !== null) {
+        const [, path, title] = match
+        items.push({
+          title: title.trim(),
+          url: `https://bbs.hupu.com${path}`,
+          content: title.trim(),
+          source: '虎扑',
+        })
+      }
+
+      const limit = this.config.datasources.hupu?.limit || 20
+      return items.slice(0, limit)
+    } catch (error) {
+      logger.error('Error fetching Hupu hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 凤凰网热点（移植自 newsnow）
+   */
+  async fetchIfengHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Ifeng hot news')
+    try {
+      const html = await this.client.get('https://www.ifeng.com/', {
+        headers: { 'Accept': 'text/html' },
+        timeout: 15000,
+      }).then(r => typeof r.data === 'string' ? r.data : '')
+
+      const items: NewsItem[] = []
+      const regex = /var\s+allData\s*=\s*(\{[\s\S]*?\});/
+      const match = regex.exec(html)
+      if (match?.[1]) {
+        try {
+          const realData = JSON.parse(match[1])
+          const rawNews = realData.hotNews1 || []
+          for (const hotNews of rawNews) {
+            if (hotNews.url && hotNews.title) {
+              items.push({
+                title: hotNews.title,
+                url: hotNews.url,
+                content: hotNews.title,
+                source: '凤凰网',
+                publishedAt: hotNews.newsTime || undefined,
+              })
+            }
+          }
+        } catch (_) {
+          // JSON 解析失败
+        }
+      }
+
+      const limit = this.config.datasources.ifeng?.limit || 20
+      return items.slice(0, limit)
+    } catch (error) {
+      logger.error('Error fetching Ifeng hot:', error)
+      return []
+    }
+  }
+
+  /**
+   * GitHub Trending（移植自 newsnow）
+   */
+  async fetchGithubTrending(): Promise<NewsItem[]> {
+    logger.info('Fetching GitHub Trending')
+    try {
+      const html = await this.client.get('https://github.com/trending?spoken_language_code=', {
+        headers: { 'Accept': 'text/html' },
+        timeout: 15000,
+      }).then(r => typeof r.data === 'string' ? r.data : '')
+
+      const $ = cheerio.load(html)
+      const items: NewsItem[] = []
+      const $main = $('main .Box div[data-hpc] > article')
+
+      $main.each((_, el) => {
+        const a = $(el).find('>h2 a')
+        const title = a.text().replace(/\n+/g, '').trim()
+        const urlPath = a.attr('href')
+        const star = $(el).find('[href$=stargazers]').text().replace(/\s+/g, '').trim()
+        const desc = $(el).find('>p').text().replace(/\n+/g, '').trim()
+
+        if (urlPath && title) {
+          items.push({
+            title,
+            url: `https://github.com${urlPath}`,
+            content: desc ? `⭐ ${star} — ${desc}` : `⭐ ${star}`,
+            source: 'GitHub',
+          })
+        }
+      })
+
+      const limit = this.config.datasources.github?.limit || 20
+      return items.slice(0, limit)
+    } catch (error) {
+      logger.error('Error fetching GitHub Trending:', error)
+      return []
+    }
+  }
+
+  /**
+   * Solidot 最新文章（移植自 newsnow）
+   */
+  async fetchSolidotHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Solidot articles')
+    try {
+      const html = await this.client.get('https://www.solidot.org', {
+        headers: { 'Accept': 'text/html' },
+        timeout: 15000,
+      }).then(r => typeof r.data === 'string' ? r.data : '')
+
+      const $ = cheerio.load(html)
+      const items: NewsItem[] = []
+
+      $('.block_m').each((_, el) => {
+        const a = $(el).find('.bg_htit a').last()
+        const urlPath = a.attr('href')
+        const title = a.text().trim()
+        if (urlPath && title) {
+          items.push({
+            title,
+            url: `https://www.solidot.org${urlPath}`,
+            content: title,
+            source: 'Solidot',
+          })
+        }
+      })
+
+      const limit = this.config.datasources.solidot?.limit || 20
+      return items.slice(0, limit)
+    } catch (error) {
+      logger.error('Error fetching Solidot:', error)
+      return []
+    }
+  }
+
+  /**
+   * 华尔街见闻快讯（移植自 newsnow）
+   */
+  async fetchWallstreetcnHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Wallstreetcn live')
+    try {
+      const response = await this.client.get('https://api-one.wallstcn.com/apiv1/content/lives', {
+        params: { channel: 'global-channel', limit: 30 },
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const items = response.data?.data?.items || []
+      const limit = this.config.datasources.wallstreetcn?.limit || 20
+
+      return items.slice(0, limit).map((k: any) => ({
+        title: k.title || k.content_text || '',
+        url: k.uri || '',
+        content: k.content_text || k.title || '',
+        source: '华尔街见闻',
+        publishedAt: k.display_time ? new Date(k.display_time * 1000).toISOString() : undefined,
+      })).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Wallstreetcn:', error)
+      return []
+    }
+  }
+
+  /**
+   * LINUX DO 今日最热（移植自 newsnow）
+   */
+  async fetchLinuxdoHot(): Promise<NewsItem[]> {
+    logger.info('Fetching LinuxDO hot topics')
+    try {
+      const response = await this.client.get('https://linux.do/top/daily.json', {
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const topics = response.data?.topic_list?.topics || []
+      const limit = this.config.datasources.linuxdo?.limit || 20
+
+      return topics
+        .filter((k: any) => k.visible && !k.archived && !k.pinned)
+        .slice(0, limit)
+        .map((k: any) => ({
+          title: k.title || '',
+          url: `https://linux.do/t/topic/${k.id}`,
+          content: k.excerpt || k.title || '',
+          source: 'LinuxDO',
+          publishedAt: k.created_at || undefined,
+        }))
+        .filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching LinuxDO:', error)
+      return []
+    }
+  }
+
+  /**
+   * FreeBuf 安全资讯（移植自 newsnow）
+   */
+  async fetchFreebufHot(): Promise<NewsItem[]> {
+    logger.info('Fetching FreeBuf articles')
+    try {
+      const html = await this.client.get('https://www.freebuf.com', {
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Referer': 'https://www.freebuf.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        },
+        timeout: 15000,
+      }).then(r => typeof r.data === 'string' ? r.data : '')
+
+      const $ = cheerio.load(html)
+      const items: NewsItem[] = []
+
+      $('.article-item').each((_, el) => {
+        const titleLink = $(el).find('.title-left .title').parent()
+        const title = titleLink.find('.title').text().trim()
+        const urlRaw = titleLink.attr('href') || ''
+        const description = $(el).find('.item-right .text-line-2').first().text().trim()
+
+        if (title) {
+          const url = urlRaw.startsWith('http') ? urlRaw : `https://www.freebuf.com${urlRaw}`
+          items.push({
+            title,
+            url,
+            content: description || title,
+            source: 'FreeBuf',
+          })
+        }
+      })
+
+      const limit = this.config.datasources.freebuf?.limit || 20
+      return items.slice(0, limit)
+    } catch (error) {
+      logger.error('Error fetching FreeBuf:', error)
+      return []
+    }
+  }
+
+  /**
+   * 牛客热搜（移植自 newsnow）
+   */
+  async fetchNowcoderHot(): Promise<NewsItem[]> {
+    logger.info('Fetching Nowcoder hot topics')
+    try {
+      const timestamp = Date.now()
+      const response = await this.client.get('https://gw-c.nowcoder.com/api/sparta/hot-search/top-hot-pc', {
+        params: { size: 20, _: timestamp, t: '' },
+        headers: { 'Accept': 'application/json' },
+        timeout: 15000,
+      })
+
+      const result = response.data?.data?.result || []
+      const limit = this.config.datasources.nowcoder?.limit || 20
+
+      return result.slice(0, limit).map((k: any) => {
+        let url: string
+        if (k.type === 74) {
+          url = `https://www.nowcoder.com/feed/main/detail/${k.uuid}`
+        } else {
+          url = `https://www.nowcoder.com/discuss/${k.id}`
+        }
+        return {
+          title: k.title || '',
+          url,
+          content: k.title || '',
+          source: '牛客',
+        }
+      }).filter((i: NewsItem) => i.title)
+    } catch (error) {
+      logger.error('Error fetching Nowcoder hot:', error)
       return []
     }
   }

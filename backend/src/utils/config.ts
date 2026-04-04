@@ -28,6 +28,12 @@ interface Config {
     temperature: number
     maxTokens: number
     timeout: number
+    lmStudio: {
+      enabled: boolean
+      apiUrl: string
+      apiKey: string
+      model: string
+    }
   }
   aiAlternatives: Array<any>
   notifications: {
@@ -64,9 +70,45 @@ interface Config {
       maxRequests: number
     }
   }
+  scheduler: {
+    enabled: boolean
+    intervalHours: number
+  }
 }
 
 let config: Config | null = null
+
+function normalizeLmStudioConfig(ai: Partial<Config['ai']> | undefined): Config['ai']['lmStudio'] {
+  const lmStudio = (ai?.lmStudio || {}) as Partial<Config['ai']['lmStudio']>
+
+  return {
+    enabled: Boolean(lmStudio.enabled),
+    apiUrl: String(lmStudio.apiUrl || 'http://localhost:1234/v1'),
+    apiKey: String(lmStudio.apiKey || 'lm-studio'),
+    model: String(lmStudio.model || ai?.model || ''),
+  }
+}
+
+function resolveAiConfig(currentConfig: Config) {
+  const provider = String(currentConfig.ai.provider || '').toLowerCase()
+  const lmStudio = normalizeLmStudioConfig(currentConfig.ai)
+  const useLmStudio = lmStudio.enabled || provider === 'lmstudio'
+
+  currentConfig.ai.lmStudio = {
+    ...lmStudio,
+    enabled: useLmStudio,
+  }
+
+  if (!useLmStudio) return
+
+  currentConfig.ai.provider = 'lmstudio'
+  currentConfig.ai.apiUrl = currentConfig.ai.lmStudio.apiUrl
+  currentConfig.ai.apiKey = currentConfig.ai.lmStudio.apiKey || 'lm-studio'
+
+  if (currentConfig.ai.lmStudio.model) {
+    currentConfig.ai.model = currentConfig.ai.lmStudio.model
+  }
+}
 
 // 深度合并对象
 function deepMerge(target: any, source: any): any {
@@ -112,9 +154,23 @@ export function loadConfig(): Config {
     config = defaultConfig as Config
   }
 
+  config.ai.lmStudio = normalizeLmStudioConfig(config.ai)
+
   // 从环境变量覆盖配置
   if (process.env.OPENAI_API_KEY) {
     config.ai.apiKey = process.env.OPENAI_API_KEY
+  }
+  if (process.env.LM_STUDIO_ENABLED) {
+    config.ai.lmStudio.enabled = /^(1|true|yes)$/i.test(process.env.LM_STUDIO_ENABLED)
+  }
+  if (process.env.LM_STUDIO_API_URL) {
+    config.ai.lmStudio.apiUrl = process.env.LM_STUDIO_API_URL
+  }
+  if (process.env.LM_STUDIO_API_KEY) {
+    config.ai.lmStudio.apiKey = process.env.LM_STUDIO_API_KEY
+  }
+  if (process.env.LM_STUDIO_MODEL) {
+    config.ai.lmStudio.model = process.env.LM_STUDIO_MODEL
   }
   if (process.env.TWITTER_API_KEY) {
     config.datasources.twitter.apiKey = process.env.TWITTER_API_KEY
@@ -122,6 +178,8 @@ export function loadConfig(): Config {
   if (process.env.APP_PORT) {
     config.server.port = parseInt(process.env.APP_PORT)
   }
+
+  resolveAiConfig(config)
 
   logger.info('✅ Configuration loaded successfully')
   return config

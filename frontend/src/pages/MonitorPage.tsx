@@ -37,8 +37,8 @@ function MatchCard({ item }: { item: NewsItem }) {
         <div className="flex items-center gap-2 mt-1.5">
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/50 text-slate-500">{item.source}</span>
           <span className="text-[10px] text-slate-600">热度 {item.hotness}</span>
-          {item.verified === 1 && <span className="text-[10px] text-emerald-500">✓ 已验证</span>}
-          {item.verified === 0 && <span className="text-[10px] text-red-400">⚠ 可疑</span>}
+          {item.verified === 1 && <span className="text-[10px] text-emerald-500">已验证</span>}
+          {item.verified === 0 && <span className="text-[10px] text-red-400">可疑</span>}
         </div>
       </div>
       {item.url && (
@@ -110,7 +110,7 @@ function KeywordCard({
               )}
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              {kw.active === 1 ? '🟢 正在监控中' : '⏸ 已暂停'}
+              {kw.active === 1 ? '正在监控中' : '已暂停'}
               {kw.lastCheckedAt && ` · 上次检查: ${new Date(kw.lastCheckedAt).toLocaleString('zh-CN')}`}
             </p>
           </div>
@@ -142,7 +142,7 @@ function KeywordCard({
               )}
               title={kw.active === 1 ? '暂停' : '恢复'}
             >
-              {kw.active === 1 ? '⏸' : '▶'}
+              {kw.active === 1 ? '||' : '▶'}
             </motion.button>
             <motion.button
               whileHover={{ scale: 1.1 }}
@@ -179,7 +179,7 @@ function KeywordCard({
                       transition={{ duration: 2, repeat: Infinity }}
                       className="text-xs text-slate-500"
                     >
-                      🔍 暂无匹配结果，系统持续监控中...
+                      暂无匹配结果，系统持续监控中...
                     </motion.p>
                   </div>
                 ) : (
@@ -302,7 +302,7 @@ export default function MonitorPage() {
               exit={{ opacity: 0 }}
               className="text-xs text-red-400 mt-2 flex items-center gap-1"
             >
-              ⚠ {error}
+              {error}
             </motion.p>
           )}
         </AnimatePresence>
@@ -333,7 +333,7 @@ export default function MonitorPage() {
             animate={{ rotateY: [0, 360] }}
             transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
             className="text-5xl mb-4 inline-block"
-          >🎯</motion.div>
+          ><span className="w-8 h-8 rounded-full bg-fuchsia-500/20 inline-flex items-center justify-center"><span className="w-3 h-3 rounded-full bg-fuchsia-400"/></span></motion.div>
           <p className="text-slate-400 font-medium">尚未添加监控关键词</p>
           <p className="text-xs text-slate-600 mt-2">在上方输入关键词开始监控</p>
         </motion.div>

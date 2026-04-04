@@ -108,6 +108,96 @@
       "refreshInterval": 900000,
       "limit": 20,
       "note": "虎嗅科技资讯，RSS订阅"
+    },
+    "douyin": {
+      "enabled": true,
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "抖音热搜榜，无需API Key"
+    },
+    "thepaper": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "澎湃新闻热榜，无需API Key"
+    },
+    "juejin": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "掘金热门技术文章，无需API Key"
+    },
+    "sspai": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "少数派热门文章，无需API Key"
+    },
+    "v2ex": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "V2EX 最新分享，无需API Key"
+    },
+    "douban": {
+      "enabled": true,
+      "refreshInterval": 1800000,
+      "limit": 20,
+      "note": "豆瓣热门电影，无需API Key"
+    },
+    "tieba": {
+      "enabled": true,
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "百度贴吧热议，无需API Key"
+    },
+    "hupu": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "虎扑热帖，无需API Key"
+    },
+    "ifeng": {
+      "enabled": true,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "凤凰网热点，无需API Key"
+    },
+    "github": {
+      "enabled": true,
+      "refreshInterval": 1800000,
+      "limit": 20,
+      "note": "GitHub Trending，无需API Key"
+    },
+    "solidot": {
+      "enabled": true,
+      "refreshInterval": 1800000,
+      "limit": 20,
+      "note": "Solidot 科技资讯，无需API Key"
+    },
+    "wallstreetcn": {
+      "enabled": true,
+      "refreshInterval": 600000,
+      "limit": 20,
+      "note": "华尔街见闻快讯，无需API Key"
+    },
+    "linuxdo": {
+      "enabled": false,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "LINUX DO 论坛热帖，无需API Key"
+    },
+    "freebuf": {
+      "enabled": true,
+      "refreshInterval": 1800000,
+      "limit": 20,
+      "note": "FreeBuf 安全资讯，无需API Key"
+    },
+    "nowcoder": {
+      "enabled": false,
+      "refreshInterval": 900000,
+      "limit": 20,
+      "note": "牛客热搜，无需API Key"
     }
   },
   "ai": {
@@ -117,7 +207,13 @@
     "model": "gpt-3.5-turbo",
     "temperature": 0.7,
     "maxTokens": 500,
-    "timeout": 30000
+    "timeout": 30000,
+    "lmStudio": {
+      "enabled": false,
+      "apiUrl": "http://localhost:1234/v1",
+      "apiKey": "lm-studio",
+      "model": "your-loaded-model-id"
+    }
   },
   "aiAlternatives": [
     {
@@ -167,5 +263,9 @@
       "windowMs": 900000,
       "maxRequests": 100
     }
+  },
+  "scheduler": {
+    "enabled": false,
+    "intervalHours": 6
   }
 }

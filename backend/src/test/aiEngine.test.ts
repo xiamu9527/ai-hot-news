@@ -74,6 +74,61 @@ describe('AIEngine', () => {
       expect(result.score).toBe(100)
     })
 
+    it('应优先使用 json_schema 结构化输出', async () => {
+      mockCreate.mockResolvedValueOnce({
+        choices: [{
+          message: { content: '{"isHotness": true, "score": 80, "reasoning": "结构化返回"}' },
+        }],
+      })
+
+      await engine.detectHotness('schema test', 'schema content')
+
+      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
+        response_format: expect.objectContaining({ type: 'json_schema' }),
+      }))
+    })
+
+    it('bailian 提供方应默认使用 json_object', async () => {
+      vi.resetModules()
+      vi.doMock('../utils/config.js', () => ({
+        getConfig: () => ({
+          ai: {
+            provider: 'bailian',
+            apiKey: 'test-key',
+            apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            model: 'qwen-test',
+            temperature: 0.7,
+            maxTokens: 500,
+            timeout: 10000,
+          },
+          datasources: {},
+        }),
+        loadConfig: vi.fn(),
+        Config: {},
+      }))
+
+      const { AIEngine: BailianEngine } = await import('../ai/engine.js')
+      const bailianEngine = new BailianEngine()
+      const bailianCreate = (bailianEngine as any).client.chat.completions.create
+      bailianCreate.mockReset()
+      bailianCreate.mockResolvedValueOnce({
+        choices: [{
+          message: { content: '{"isHotness":true,"score":75,"reasoning":"兼容模式返回"}' },
+        }],
+      })
+
+      await bailianEngine.detectHotness('schema test', 'schema content')
+
+      expect(bailianCreate).toHaveBeenCalledWith(expect.objectContaining({
+        response_format: { type: 'json_object' },
+        messages: expect.arrayContaining([
+          expect.objectContaining({ content: expect.stringMatching(/json/i) }),
+        ]),
+      }))
+
+      vi.resetModules()
+    })
+
     it('AI 调用失败时应降级返回默认值', async () => {
       mockCreate.mockRejectedValue(new Error('API Error'))
 
@@ -221,6 +276,120 @@ describe('AIEngine', () => {
       expect(result).toHaveLength(2)
       expect(result[0].score).toBe(30) // 默认评分
       expect(result[0].reasoning).toBe('AI批量分析不可用，暂以默认热度展示')
+    })
+  })
+
+  describe('analyzeNewsBatch', () => {
+    it('应返回按 id 对齐的批量判断结果', async () => {
+      mockCreate.mockResolvedValueOnce({
+        choices: [{
+          message: {
+            content: '[{"id":"101","score":88,"category":"AI","reasoning":"行业关注度高","importance":"high","isHotness":true,"riskFlag":false}]',
+          },
+        }],
+      })
+
+      const result = await engine.analyzeNewsBatch('综合热点', [
+        { id: '101', title: 'AI 新模型发布', source: 'Bing', summary: '模型能力提升明显', publishedAt: '2026-04-04T00:00:00Z' },
+      ])
+
+      expect(result).toEqual([
+        {
+          id: '101',
+          score: 88,
+          category: 'AI',
+          reasoning: '行业关注度高',
+          importance: 'high',
+          isHotness: true,
+          riskFlag: false,
+        },
+      ])
+    })
+
+    it('AI 失败时应按输入 id 返回默认结果', async () => {
+      mockCreate.mockRejectedValue(new Error('fail'))
+
+      const result = await engine.analyzeNewsBatch('综合热点', [
+        { id: '101', title: 'AI 新模型发布', source: 'Bing', summary: '模型能力提升明显', publishedAt: null },
+        { id: '102', title: '旧闻转发', source: '微博', summary: '重复传播内容', publishedAt: null },
+      ])
+
+      expect(result).toHaveLength(2)
+      expect(result[0].id).toBe('101')
+      expect(result[0].score).toBe(30)
+      expect(result[1].id).toBe('102')
+      expect(result[1].importance).toBe('medium')
+    })
+  })
+
+  describe('generateNewsReport', () => {
+    it('AI 失败时应返回可展示的保底综合报告', async () => {
+      mockCreate.mockRejectedValue(new Error('fail'))
+
+      const result = await engine.generateNewsReport('matched', [
+        {
+          id: 1,
+          title: '命中新闻',
+          source: 'Bing',
+          summary: '摘要内容',
+          hotness: 80,
+          aiAnalysis: '{"reasoning":"测试"}',
+        },
+      ])
+
+      expect(result.headline).toBe('命中分析综合报告')
+      expect(result.summary).toBe('AI 综合报告暂不可用。')
+      expect(result.keyFindings).toEqual([])
+    })
+
+    it('额度耗尽时应返回明确提示', async () => {
+      const error = new Error('403 The free tier of the model has been exhausted.') as Error & { status?: number }
+      error.status = 403
+      mockCreate.mockRejectedValue(error)
+
+      const result = await engine.generateNewsReport('hotspots', [
+        {
+          id: 1,
+          title: '热点新闻',
+          source: 'Bing',
+          summary: '摘要内容',
+          hotness: 80,
+          aiAnalysis: '',
+        },
+      ])
+
+      expect(result.summary).toBe('AI 额度已用尽，当前先展示基础结果。请补充模型额度后再生成综合报告。')
+    })
+
+    it('结构化输出不支持时应回退到带 json 提示的 json_object 模式', async () => {
+      mockCreate
+        .mockRejectedValueOnce(new Error('response_format json_schema not supported'))
+        .mockResolvedValueOnce({
+          choices: [{
+            message: {
+              content: '{"headline":"热点探索综合报告","summary":"已生成","keyFindings":["发现"],"riskAlerts":[],"recommendedActions":["继续观察"]}',
+            },
+          }],
+        })
+
+      const result = await engine.generateNewsReport('hotspots', [
+        {
+          id: 1,
+          title: '热点新闻',
+          source: 'Bing',
+          summary: '摘要内容',
+          hotness: 66,
+          aiAnalysis: '',
+        },
+      ])
+
+      expect(result.headline).toBe('热点探索综合报告')
+      expect(mockCreate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        response_format: { type: 'json_object' },
+        messages: expect.arrayContaining([
+          expect.objectContaining({ content: expect.stringMatching(/json/i) }),
+        ]),
+      }))
     })
   })
 })

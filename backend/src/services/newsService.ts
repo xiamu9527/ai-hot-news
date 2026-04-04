@@ -21,17 +21,25 @@ export interface NewsQueryOptions {
   source?: string
   keyword?: string
   keywordId?: number
+  matchMode?: 'all' | 'matched' | 'unmatched'
   limit?: number
   offset?: number
   minHotness?: number
+  /** 最大保留天数，默认 7，传 0 表示不限制 */
+  maxAgeDays?: number
 }
 
 export function getNewsList(options: NewsQueryOptions = {}): { data: NewsItem[]; total: number } {
   const db = getDb()
-  const { source, keyword, keywordId, limit = 30, offset = 0, minHotness } = options
+  const { source, keyword, keywordId, matchMode = 'all', limit = 30, offset = 0, minHotness, maxAgeDays = 7 } = options
 
   let where = 'WHERE 1=1'
   const params: any[] = []
+
+  // 默认过滤一周以前的新闻（maxAgeDays=0 不限制）
+  if (maxAgeDays > 0) {
+    where += ` AND n.createdAt >= datetime('now', '-${Math.floor(maxAgeDays)} days')`
+  }
 
   if (source && source !== 'all') {
     where += ' AND n.source = ?'
@@ -45,6 +53,12 @@ export function getNewsList(options: NewsQueryOptions = {}): { data: NewsItem[];
   if (keywordId !== undefined) {
     where += ' AND EXISTS (SELECT 1 FROM keyword_matches km WHERE km.newsId = n.id AND km.keywordId = ?)'
     params.push(keywordId)
+  }
+  if (matchMode === 'matched') {
+    where += ' AND EXISTS (SELECT 1 FROM keyword_matches km WHERE km.newsId = n.id)'
+  }
+  if (matchMode === 'unmatched') {
+    where += ' AND NOT EXISTS (SELECT 1 FROM keyword_matches km WHERE km.newsId = n.id)'
   }
   if (minHotness !== undefined) {
     where += ' AND n.hotness >= ?'
@@ -66,6 +80,16 @@ export function getNewsList(options: NewsQueryOptions = {}): { data: NewsItem[];
 export function getNewsById(id: number): NewsItem | undefined {
   const db = getDb()
   return db.prepare('SELECT * FROM news WHERE id = ?').get(id) as NewsItem | undefined
+}
+
+export function getNewsByIds(ids: number[]): NewsItem[] {
+  if (ids.length === 0) return []
+
+  const db = getDb()
+  const placeholders = ids.map(() => '?').join(', ')
+  const rows = db.prepare(`SELECT * FROM news WHERE id IN (${placeholders})`).all(...ids) as NewsItem[]
+  const rowMap = new Map(rows.map((row) => [row.id, row]))
+  return ids.map((id) => rowMap.get(id)).filter(Boolean) as NewsItem[]
 }
 
 export function upsertNews(item: {

@@ -37,10 +37,31 @@ export interface Notification {
   createdAt: string
 }
 
+export interface AiProgressEvent {
+  pipeline: 'hotspots' | 'keywords'
+  stage: 'started' | 'seeded' | 'batch' | 'detail' | 'completed'
+  current: number
+  total: number
+  message: string
+  keyword?: string
+  timestamp: string
+}
+
 // API 响应类型
 export interface NewsListResponse {
   data: NewsItem[]
   total: number
+}
+
+export type NewsMatchMode = 'all' | 'matched' | 'unmatched'
+
+export interface NewsReport {
+  headline: string
+  summary: string
+  keyFindings: string[]
+  riskAlerts: string[]
+  recommendedActions: string[]
+  stockMarketImpact: string[]
 }
 
 export interface KeywordListResponse {
@@ -65,10 +86,26 @@ export interface SettingsData {
     model: string
     hasApiKey: boolean
     apiUrl: string
+    lmStudio: {
+      enabled: boolean
+      apiUrl: string
+      model: string
+      hasApiKey: boolean
+    }
+    effective: {
+      provider: string
+      model: string
+      apiUrl: string
+      mode: 'lmstudio' | 'cloud'
+    }
   }
   notifications: {
     enabled: boolean
     types: string[]
     web: { enabled: boolean; useWebSocket: boolean }
+  }
+  scheduler: {
+    enabled: boolean
+    intervalHours: number
   }
 }

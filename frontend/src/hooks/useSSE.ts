@@ -1,9 +1,10 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import type { Notification } from '@/types'
+import type { AiProgressEvent, Notification } from '@/types'
 
 interface SSECallbacks {
   onNotification?: (notification: Notification) => void
   onHotspotUpdate?: (data: { timestamp: string; count: number }) => void
+  onAiProgress?: (data: AiProgressEvent) => void
   onConnected?: () => void
   onDisconnected?: () => void
 }
@@ -38,6 +39,13 @@ export function useSSE(callbacks: SSECallbacks) {
       try {
         const data = JSON.parse(event.data)
         callbacksRef.current.onHotspotUpdate?.(data)
+      } catch { /* ignore */ }
+    })
+
+    es.addEventListener('ai_progress', (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        callbacksRef.current.onAiProgress?.(data)
       } catch { /* ignore */ }
     })
 

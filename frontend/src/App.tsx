@@ -1,16 +1,17 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSSE } from '@/hooks/useSSE'
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from '@/utils/api'
-import type { Notification } from '@/types'
+import type { AiProgressEvent, Notification } from '@/types'
 import { Spotlight } from '@/components/ui/spotlight'
 import { BackgroundBeams } from '@/components/ui/background-beams'
 import { FloatingDock } from '@/components/ui/floating-dock'
-import NewsPage from '@/pages/NewsPage'
+import MatchAnalysisPage from '@/pages/MatchAnalysisPage'
+import HotspotExplorePage from '@/pages/HotspotExplorePage'
 import MonitorPage from '@/pages/MonitorPage'
 import SettingsPage from '@/pages/SettingsPage'
 
-type Tab = 'news' | 'monitor' | 'settings'
+type Tab = 'matches' | 'hotspots' | 'monitor' | 'settings'
 
 function NotificationPanel({
   notifications,
@@ -45,7 +46,7 @@ function NotificationPanel({
         <div className="sticky top-0 bg-slate-900/95 backdrop-blur-xl p-4 border-b border-slate-800/60 z-10">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-100 flex items-center gap-2">
-              <span className="text-lg">🔔</span>
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
               通知中心
               {unreadCount > 0 && (
                 <motion.span
@@ -79,7 +80,7 @@ function NotificationPanel({
         <div className="p-3 space-y-2">
           {notifications.length === 0 ? (
             <div className="text-center py-16">
-              <div className="text-4xl mb-3 opacity-30">🔔</div>
+              <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center mb-3 opacity-30"><span className="w-2 h-2 rounded-full bg-slate-600" /></div>
               <p className="text-sm text-slate-500">暂无通知</p>
             </div>
           ) : (
@@ -98,7 +99,7 @@ function NotificationPanel({
               >
                 <div className="flex items-start gap-2.5">
                   <span className="text-sm mt-0.5">
-                    {n.type === 'keyword_match' ? '🎯' : '📡'}
+                    <span className={`w-1.5 h-1.5 rounded-full inline-block ${n.type === 'keyword_match' ? 'bg-fuchsia-400' : 'bg-cyan-400'}`} />
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-slate-200 line-clamp-1">{n.title}</p>
@@ -121,11 +122,24 @@ function NotificationPanel({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('news')
+  const [activeTab, setActiveTab] = useState<Tab>('matches')
   const [showNotifications, setShowNotifications] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [toast, setToast] = useState<{ message: string; type: string } | null>(null)
+  const [aiProgress, setAiProgress] = useState<AiProgressEvent | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+  const refreshTimerRef = useRef<number | null>(null)
+
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      window.clearTimeout(refreshTimerRef.current)
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      setRefreshTick((prev) => prev + 1)
+      refreshTimerRef.current = null
+    }, 500)
+  }, [])
 
   // SSE 实时连接
   const { connected } = useSSE({
@@ -136,7 +150,18 @@ export default function App() {
       setTimeout(() => setToast(null), 5000)
     },
     onHotspotUpdate: () => {
-      // 热点更新时可以触发页面刷新
+      scheduleRefresh()
+    },
+    onAiProgress: (data) => {
+      setAiProgress(data)
+      if (data.stage === 'seeded' || data.stage === 'batch' || data.stage === 'detail' || data.stage === 'completed') {
+        scheduleRefresh()
+      }
+      if (data.stage === 'completed') {
+        window.setTimeout(() => {
+          setAiProgress((current) => (current?.timestamp === data.timestamp ? null : current))
+        }, 4000)
+      }
     },
   })
 
@@ -153,6 +178,14 @@ export default function App() {
     loadNotifications()
   }, [loadNotifications])
 
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current)
+      }
+    }
+  }, [])
+
   const handleMarkRead = async (id: number) => {
     await markNotificationRead(id)
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: 1 } : n)))
@@ -167,20 +200,26 @@ export default function App() {
 
   const dockItems = [
     {
-      title: '热点',
-      icon: <span>📡</span>,
-      active: activeTab === 'news',
-      onClick: () => setActiveTab('news'),
+      title: '命中分析',
+      icon: <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400" />,
+      active: activeTab === 'matches',
+      onClick: () => setActiveTab('matches'),
     },
     {
-      title: '监控',
-      icon: <span>🎯</span>,
+      title: '热点探索',
+      icon: <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />,
+      active: activeTab === 'hotspots',
+      onClick: () => setActiveTab('hotspots'),
+    },
+    {
+      title: '关键词',
+      icon: <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />,
       active: activeTab === 'monitor',
       onClick: () => setActiveTab('monitor'),
     },
     {
       title: '设置',
-      icon: <span>⚙️</span>,
+      icon: <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />,
       active: activeTab === 'settings',
       onClick: () => setActiveTab('settings'),
     },
@@ -209,7 +248,7 @@ export default function App() {
                   whileHover={{ scale: 1.05, rotate: 2 }}
                   className="w-9 h-9 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-500/25"
                 >
-                  <span className="text-lg">⚡</span>
+                  <span className="text-lg font-bold text-cyan-400">/</span>
                 </motion.div>
                 <div className="absolute -inset-0.5 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg blur opacity-30 animate-pulse" />
               </div>
@@ -217,7 +256,7 @@ export default function App() {
                 <h1 className="text-base font-bold bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-400 bg-clip-text text-transparent">
                   HotPulse
                 </h1>
-                <p className="text-[10px] text-slate-600 tracking-widest uppercase">AI 热点监控引擎</p>
+                <p className="text-[10px] text-slate-600 tracking-widest uppercase">实时热点情报台</p>
               </div>
             </motion.div>
 
@@ -246,7 +285,7 @@ export default function App() {
                 onClick={() => setShowNotifications(true)}
                 className="relative p-2 rounded-lg hover:bg-slate-800/50 transition-colors"
               >
-                <span className="text-lg">🔔</span>
+                <span className="w-2 h-2 rounded-full bg-cyan-400" />
                 <AnimatePresence>
                   {unreadCount > 0 && (
                     <motion.span
@@ -266,14 +305,40 @@ export default function App() {
       </header>
 
       {/* Floating Dock Navigation */}
-      <nav className="sticky top-[57px] z-30 bg-slate-950/60 backdrop-blur-xl border-b border-slate-800/40">
-        <div className="max-w-7xl mx-auto px-4 py-2 flex justify-center">
-          <FloatingDock items={dockItems} />
+      <nav className="fixed bottom-3 left-4 right-4 z-30 rounded-3xl border border-slate-800/50 bg-slate-950/80 backdrop-blur-xl shadow-2xl shadow-black/30 sm:sticky sm:top-[57px] sm:left-auto sm:right-auto sm:bottom-auto sm:rounded-none sm:border-x-0 sm:border-t-0 sm:border-b sm:bg-slate-950/60 sm:shadow-none">
+        <div className="max-w-7xl mx-auto px-0 py-0 sm:px-4 sm:py-2 flex justify-center">
+          <FloatingDock items={dockItems} className="w-full sm:w-auto" />
         </div>
       </nav>
 
       {/* Main Content with page transitions */}
-      <main className="max-w-7xl mx-auto px-4 py-6 relative">
+      <main className="max-w-7xl mx-auto px-4 py-6 pb-28 sm:pb-6 relative">
+        <AnimatePresence>
+          {aiProgress && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="mb-5 rounded-2xl border border-cyan-500/20 bg-slate-950/80 p-4 backdrop-blur-xl"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-300/80">实时 AI 状态</p>
+                  <p className="mt-2 text-sm text-slate-100">{aiProgress.message}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    流水线：{aiProgress.pipeline === 'hotspots' ? '热点探索' : '关键词命中'}
+                    {aiProgress.keyword ? ` · ${aiProgress.keyword}` : ''}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-cyan-400/20 bg-slate-900/70 px-4 py-3 text-right">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">当前进度</p>
+                  <p className="mt-1 text-2xl font-black text-white">{aiProgress.current}/{Math.max(aiProgress.total, aiProgress.current)}</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -282,7 +347,8 @@ export default function App() {
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: 0.2 }}
           >
-            {activeTab === 'news' && <NewsPage />}
+            {activeTab === 'matches' && <MatchAnalysisPage refreshTick={refreshTick} aiProgress={aiProgress} />}
+            {activeTab === 'hotspots' && <HotspotExplorePage refreshTick={refreshTick} aiProgress={aiProgress} />}
             {activeTab === 'monitor' && <MonitorPage />}
             {activeTab === 'settings' && <SettingsPage />}
           </motion.div>
@@ -297,12 +363,12 @@ export default function App() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-            className="fixed bottom-6 right-6 z-50"
+            className="fixed bottom-24 right-4 z-50 sm:bottom-6 sm:right-6"
           >
             <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-cyan-500/20
               bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-cyan-500/10 max-w-sm">
               <span className="text-lg shrink-0">
-                {toast.type === 'keyword_match' ? '🎯' : '📡'}
+                <span className={`w-2 h-2 rounded-full inline-block ${toast.type === 'keyword_match' ? 'bg-fuchsia-400' : 'bg-cyan-400'}`} />
               </span>
               <p className="text-xs text-slate-200 line-clamp-2">{toast.message}</p>
               <button

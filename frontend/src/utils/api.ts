@@ -7,6 +7,8 @@ import type {
   NotificationListResponse,
   NewsStats,
   SettingsData,
+  NewsMatchMode,
+  NewsReport,
 } from '@/types'
 
 const api = axios.create({
@@ -19,10 +21,25 @@ export async function fetchNews(params?: {
   source?: string
   keyword?: string
   keywordId?: number
+  matchMode?: NewsMatchMode
   limit?: number
   offset?: number
 }): Promise<NewsListResponse> {
   const { data } = await api.get('/news', { params })
+  return data
+}
+
+export async function fetchNewsReport(params: {
+  mode: 'matched' | 'hotspots'
+  ids: number[]
+}, options?: {
+  signal?: AbortSignal
+  timeout?: number
+}): Promise<NewsReport> {
+  const { data } = await api.post('/news/report', params, {
+    signal: options?.signal,
+    timeout: options?.timeout ?? 5 * 60 * 1000,
+  })
   return data
 }
 
@@ -87,8 +104,23 @@ export async function fetchSettings(): Promise<SettingsData> {
 
 export async function updateSettings(settings: Partial<{
   dataSources: Record<string, { enabled: boolean }>
-  ai: { apiKey?: string; apiUrl?: string; model?: string; provider?: string }
+  ai: {
+    apiKey?: string
+    apiUrl?: string
+    model?: string
+    provider?: string
+    lmStudio?: {
+      enabled?: boolean
+      apiUrl?: string
+      apiKey?: string
+      model?: string
+    }
+  }
   notifications: Record<string, any>
+  scheduler: {
+    enabled?: boolean
+    intervalHours?: number
+  }
 }>): Promise<void> {
   await api.put('/settings', settings)
 }
